@@ -1,8 +1,9 @@
-"""Stealth Firefox product fetcher using __INITIAL_STATE__ extraction.
+"""Stealth Firefox product fetcher using the Kroger product v2 API.
 
-This is the primary data source — fetches the product page HTML via invisible_playwright
-(stealth Firefox), extracts the embedded __INITIAL_STATE__ JSON, and parses
-product/price/offer data. No API keys required.
+Fetches product/price/offer data by calling the Kroger product v2 API
+directly from the browser context (with Akamai cookies). The website
+moved from SSR to client-side fetching, so __INITIAL_STATE__ no longer
+contains product data — we call the same API the SPA would call.
 """
 
 import json
@@ -131,8 +132,17 @@ def _get_product_data(state: dict[str, Any], upc: str) -> dict[str, Any] | None:
     return None
 
 
-def _parse_product_data(product_data: dict[str, Any] | None, upc: str) -> Product | None:
-    """Parse a Product from a product data dict (from API or __INITIAL_STATE__)."""
+def _parse_product_data(
+    product_data: dict[str, Any] | None, upc: str, modality: str = "PICKUP"
+) -> Product | None:
+    """Parse a Product from a product data dict (from product v2 API).
+
+    Args:
+        product_data: The product dict from the API's data.products[0].
+        upc: Fallback UPC if not present in the data.
+        modality: The fulfillment modality ("PICKUP", "DELIVERY") used to
+                  determine availability and inventory level.
+    """
     if not product_data:
         return None
 
@@ -193,22 +203,42 @@ def _parse_product_data(product_data: dict[str, Any] | None, upc: str) -> Produc
     else:
         promo_price = 0.0
 
-    # Parse fulfillment price string (promo text displayed next to price)
+    # Parse fulfillment summaries for availability, inventory, and price string.
+    # Each summary has a "type" ("PICKUP", "DELIVERY", "IN_STORE") and an
+    # "availability" object with "sellable" (bool) and "inventoryLevel" (str).
     fulfillment_summaries: list[dict[str, Any]] = product_data.get(
         "fulfillmentSummaries", []
     )
+
+    # Find the summary matching the selected modality
+    modality_summary: dict[str, Any] | None = next(
+        (fs for fs in fulfillment_summaries if fs.get("type") == modality),
+        None,
+    )
+
+    # Parse fulfillment price string from the modality-specific summary,
+    # falling back to any summary that has one
     fulfillment_price_string: str | None = None
-    for fs in fulfillment_summaries:
-        reg: dict[str, Any] = fs.get("regular", {})
-        ps: str | None = reg.get("priceString")
+    if modality_summary:
+        ps: str | None = modality_summary.get("regular", {}).get("priceString")
         if ps:
             fulfillment_price_string = ps
-            break
+    if not fulfillment_price_string:
+        for fs in fulfillment_summaries:
+            ps2: str | None = fs.get("regular", {}).get("priceString")
+            if ps2:
+                fulfillment_price_string = ps2
+                break
 
-    # A product is "available" if it has fulfillment summaries with pricing.
-    # When a product is not carried at the selected store, fulfillmentSummaries
-    # is empty and storePrices is empty (regular price = 0.0).
-    available = len(fulfillment_summaries) > 0
+    # Determine availability and inventory level from the modality-specific summary
+    if modality_summary:
+        availability: dict[str, Any] = modality_summary.get("availability", {})
+        available: bool = availability.get("sellable", False)
+        inventory_level: str | None = availability.get("inventoryLevel")
+    else:
+        # No summary for this modality — fall back to any summary existing
+        available = len(fulfillment_summaries) > 0
+        inventory_level = None
 
     snapshot = PriceSnapshot(
         regular=regular_price,
@@ -220,6 +250,7 @@ def _parse_product_data(product_data: dict[str, Any] | None, upc: str) -> Produc
         offer_end=offer_end,
         fulfillment_price_string=fulfillment_price_string,
         available=available,
+        inventory_level=inventory_level,
     )
 
     return Product(
@@ -506,6 +537,99 @@ def _fetch_product_data_api(
     return products[0]
 
 
+def prepare_session(
+    browser: Any,
+    homepage_url: str,
+    zip_code: str = "",
+    modality: str = "PICKUP",
+    store_id: str | None = None,
+) -> tuple[Any, dict[str, str] | None, Any]:
+    """Set up a browser session for product API calls.
+
+    Flow: homepage warmup (Akamai) → robots.txt (stabilize context) → store selection.
+    No product page load is needed — the product v2 API is called directly
+    from the browser context after session setup.
+
+    Args:
+        browser: A browser instance (from InvisiblePlaywright).
+        homepage_url: The store homepage URL (e.g. https://www.kingsoopers.com/).
+        zip_code: If provided, selects a store for store-specific pricing.
+        modality: "PICKUP" or "DELIVERY". Used with zip_code.
+        store_id: Specific store location ID for PICKUP.
+
+    Returns:
+        (page, laf_headers, context) — caller must close page and context.
+        laf_headers is None if store selection was skipped or failed.
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(homepage_url)
+    static_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+
+    context = browser.new_context()
+    page = context.new_page()
+
+    # Homepage warmup — Akamai requires this before any API calls
+    page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(3000)
+
+    # Navigate to robots.txt to kill the SPA and stabilize the execution
+    # context for API calls. The SPA's client-side router destroys JS
+    # execution contexts mid-evaluate; robots.txt has no SPA.
+    page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_timeout(500)
+
+    # Store selection (if zip_code provided)
+    laf_headers: dict[str, str] | None = None
+    if zip_code:
+        try:
+            laf_headers = select_store(page, zip_code, modality, store_id)
+        except Exception:
+            logger.warning(
+                "Store selection error; using default store pricing",
+                exc_info=True,
+            )
+        if not laf_headers:
+            logger.warning(
+                "Store selection failed; using default store pricing"
+            )
+
+    return page, laf_headers, context
+
+
+def fetch_product_data(
+    page: Any,
+    upc: str,
+    laf_headers: dict[str, str] | None = None,
+    modality: str = "PICKUP",
+) -> Product | None:
+    """Fetch and parse a single product via the product v2 API.
+
+    Requires a prepared session from prepare_session(). This function only
+    makes the API call and parses the response — no page navigation.
+
+    Args:
+        page: A Playwright page from prepare_session().
+        upc: The 13-digit GTIN/UPC to look up.
+        laf_headers: LAF headers from select_store() for store-specific pricing.
+        modality: The fulfillment modality for availability/inventory parsing.
+
+    Returns:
+        Product with price and offer data, or None on failure.
+    """
+    product_data = _fetch_product_data_api(page, upc, laf_headers)
+    if product_data is None:
+        logger.warning("Failed to fetch product data via API for UPC %s", upc)
+        return None
+
+    product = _parse_product_data(product_data, upc, modality)
+    if product is None:
+        logger.warning(
+            "Failed to parse product data from API response for UPC %s", upc
+        )
+    return product
+
+
 def fetch_product(
     url_or_upc: str,
     browser: Any = None,
@@ -513,7 +637,11 @@ def fetch_product(
     modality: str = "PICKUP",
     store_id: str | None = None,
 ) -> Product | None:
-    """Fetch a product by URL or UPC using stealth Firefox.
+    """Fetch a single product by URL or UPC using stealth Firefox.
+
+    Manages its own browser session. For batch fetching multiple products,
+    use prepare_session() + fetch_product_data() instead to avoid repeating
+    homepage warmup and store selection per product.
 
     Args:
         url_or_upc: A Kroger product URL or bare UPC.
@@ -529,7 +657,7 @@ def fetch_product(
     """
     from invisible_playwright import InvisiblePlaywright
 
-    # Determine the URL to navigate to
+    # Determine the URL and UPC
     if url_or_upc.startswith(("http://", "https://")):
         url: str = url_or_upc
         try:
@@ -542,13 +670,15 @@ def fetch_product(
         if not (upc.isdigit() and len(upc) == 13):
             logger.warning("Bare UPC must be a 13-digit number, got: %r", upc)
             return None
-        # We need a URL to navigate, but we don't know the product slug.
-        # Bare UPC is not yet supported without a search step.
         logger.warning(
             "Bare UPC %r not yet supported for web fetcher; please provide a full URL",
             upc,
         )
         return None
+
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    homepage_url = f"{parsed.scheme}://{parsed.netloc}/"
 
     own_browser: bool = browser is None
     _cm: Any = None
@@ -558,73 +688,11 @@ def fetch_product(
             _cm = InvisiblePlaywright(headless=True)
             browser = _cm.__enter__()
 
-        context = browser.new_context()
-        page = context.new_page()
+        page, laf_headers, context = prepare_session(
+            browser, homepage_url, zip_code, modality, store_id
+        )
         try:
-            # Determine the domain for homepage warmup
-            from urllib.parse import urlparse
-            parsed = urlparse(url)
-            homepage_url = f"{parsed.scheme}://{parsed.netloc}/"
-
-            # Warm up Akamai session on homepage first.
-            # Going directly to a product page gets "Access Denied" because
-            # Akamai needs to set cookies via the homepage challenge first.
-            page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(3000)
-
-            # Load the product page to establish the Akamai session for
-            # this specific URL path. The SPA will make client-side API
-            # calls, but we don't need to capture those — we'll call the
-            # product API ourselves after store selection.
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(1000)
-
-            # Navigate to a static page on the same origin to kill the SPA
-            # and stabilize the execution context for API calls.
-            # The SPA's client-side router destroys JS execution contexts
-            # mid-evaluate; robots.txt has no SPA so the context is stable.
-            static_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
-            page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(500)
-
-            # If a ZIP code is provided, select a store before fetching
-            # product data. This sets cookies that determine which store's
-            # pricing the product API returns.
-            laf_headers: dict[str, str] | None = None
-            if zip_code:
-                try:
-                    laf_headers = select_store(
-                        page, zip_code, modality, store_id
-                    )
-                except Exception:
-                    logger.warning(
-                        "Store selection error; using default store pricing",
-                        exc_info=True,
-                    )
-
-                if not laf_headers:
-                    logger.warning(
-                        "Store selection failed; using default store pricing"
-                    )
-
-            # Fetch product data via the product v2 API.
-            # The website moved from SSR to client-side fetching, so
-            # __INITIAL_STATE__ no longer contains product data. We call
-            # the same API the SPA would call, from the browser context
-            # (with Akamai cookies and store selection cookies).
-            product_data = _fetch_product_data_api(page, upc, laf_headers)
-            if product_data is None:
-                logger.warning(
-                    "Failed to fetch product data via API for %r", url
-                )
-                return None
-
-            product = _parse_product_data(product_data, upc)
-            if product is None:
-                logger.warning(
-                    "Failed to parse product data from API response for %r", url
-                )
-            return product
+            return fetch_product_data(page, upc, laf_headers, modality)
         finally:
             page.close()
             context.close()

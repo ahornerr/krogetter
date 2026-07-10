@@ -31,6 +31,7 @@ class PriceSnapshot:
     offer_end: str | None = None                # ISO date string
     fulfillment_price_string: str | None = None  # e.g. "Buy 2 Get 1 Free" from fulfillmentSummaries
     available: bool = True                      # False if product has no pricing at selected store
+    inventory_level: str | None = None          # e.g. "HIGH", "MEDIUM", "LOW"; None if unavailable
 
     @property
     def is_on_sale(self) -> bool:

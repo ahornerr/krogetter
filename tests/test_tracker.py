@@ -50,6 +50,14 @@ def _make_product(upc: str, price: PriceSnapshot) -> Product:
     )
 
 
+def _mock_session(tracker: Tracker):
+    """Set up mocks for prepare_session + return mock page/context."""
+    mock_page = MagicMock()
+    mock_context = MagicMock()
+    tracker._get_browser = MagicMock(return_value=MagicMock())
+    return mock_page, mock_context
+
+
 class TestCheckItemNewSale:
     """Tests for check_item when a new sale is detected."""
 
@@ -63,17 +71,15 @@ class TestCheckItemNewSale:
         product = _make_product(item.upc, on_sale_price)
 
         tracker = Tracker(storage=storage)
-        mock_browser = MagicMock()
-        tracker._get_browser = MagicMock(return_value=mock_browser)
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch(
-            "krogetter.tracker.fetch_product_web", return_value=product
-        ) as mock_fetch:
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product) as mock_fetch,
+        ):
             changes = tracker.check_item(item)
 
-            mock_fetch.assert_called_once_with(
-                item.url, browser=mock_browser, zip_code=item.zip_code, modality=item.modality, store_id=item.location_id
-            )
+            mock_fetch.assert_called_once_with(mock_page, item.upc, None, item.modality)
 
         assert len(changes) == 1
         assert changes[0].is_new_sale is True
@@ -92,11 +98,12 @@ class TestCheckItemNotFound:
         item = _make_item()
 
         tracker = Tracker(storage=storage)
-        tracker._get_browser = MagicMock(return_value=MagicMock())
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch(
-            "krogetter.tracker.fetch_product_web", return_value=None
-        ) as mock_fetch:
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=None) as mock_fetch,
+        ):
             changes = tracker.check_item(item)
 
             mock_fetch.assert_called_once()
@@ -122,11 +129,11 @@ class TestCheckItemNotFound:
         )
 
         tracker = Tracker(storage=storage)
-        tracker._get_browser = MagicMock(return_value=MagicMock())
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch(
-            "krogetter.tracker.fetch_product_web",
-            return_value=product_without_price,
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product_without_price),
         ):
             changes = tracker.check_item(item)
 
@@ -144,11 +151,11 @@ class TestCheckItemErrors:
         item = _make_item()
 
         tracker = Tracker(storage=storage)
-        tracker._get_browser = MagicMock(return_value=MagicMock())
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch(
-            "krogetter.tracker.fetch_product_web",
-            side_effect=ConnectionError("network error"),
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", side_effect=ConnectionError("network error")),
         ):
             changes = tracker.check_item(item)
 
@@ -176,9 +183,12 @@ class TestCheckItemWithPriorHistory:
         product = _make_product(item.upc, snap)
 
         tracker = Tracker(storage=storage)
-        tracker._get_browser = MagicMock(return_value=MagicMock())
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch("krogetter.tracker.fetch_product_web", return_value=product):
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+        ):
             changes = tracker.check_item(item)
 
         assert changes == []
@@ -201,9 +211,12 @@ class TestCheckItemWithPriorHistory:
         product = _make_product(item.upc, not_on_sale)
 
         tracker = Tracker(storage=storage)
-        tracker._get_browser = MagicMock(return_value=MagicMock())
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch("krogetter.tracker.fetch_product_web", return_value=product):
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+        ):
             changes = tracker.check_item(item)
 
         assert len(changes) > 0
@@ -223,17 +236,15 @@ class TestCheckItemWebFetcher:
         product = _make_product(item.upc, on_sale_price)
 
         tracker = Tracker(storage=storage)
-        mock_browser = MagicMock()
-        tracker._get_browser = MagicMock(return_value=mock_browser)
+        mock_page, mock_context = _mock_session(tracker)
 
-        with patch(
-            "krogetter.tracker.fetch_product_web", return_value=product
-        ) as mock_web:
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product) as mock_fetch,
+        ):
             changes = tracker.check_item(item)
 
-            mock_web.assert_called_once_with(
-                item.url, browser=mock_browser, zip_code=item.zip_code, modality=item.modality, store_id=item.location_id
-            )
+            mock_fetch.assert_called_once_with(mock_page, item.upc, None, item.modality)
 
         assert len(changes) == 1
         assert changes[0].field == "initial"
@@ -261,7 +272,13 @@ class TestCheckItemWebFetcher:
         mock_browser = MagicMock()
         tracker._get_browser = MagicMock(return_value=mock_browser)
 
-        with patch("krogetter.tracker.fetch_product_web", return_value=product):
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+        ):
             # First check
             changes1 = tracker.check_item(item)
             assert len(changes1) == 1
@@ -270,7 +287,7 @@ class TestCheckItemWebFetcher:
             changes2 = tracker.check_item(item)
             assert len(changes2) == 0
 
-            # _get_browser should have been called twice but returned the same mock
+            # _get_browser should have been called twice
             assert tracker._get_browser.call_count == 2
 
 
@@ -300,7 +317,13 @@ class TestCheckOnce:
         mock_browser = MagicMock()
         tracker._get_browser = MagicMock(return_value=mock_browser)
 
-        with patch("krogetter.tracker.fetch_product_web", return_value=product):
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+        ):
             results = tracker.check_once()
 
         assert len(results) == 1
@@ -324,17 +347,21 @@ class TestCheckOnce:
         mock_browser = MagicMock()
         tracker._get_browser = MagicMock(return_value=mock_browser)
 
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+
         call_count = 0
 
-        def side_effect(url: str, browser: object, **kwargs: object) -> Product | None:
+        def side_effect(page: object, upc: str, *args: object, **kwargs: object) -> Product | None:
             nonlocal call_count
             call_count += 1
-            if item_bad.url in url:
+            if upc == item_bad.upc:
                 raise ConnectionError("network error")
             return product
 
-        with patch(
-            "krogetter.tracker.fetch_product_web", side_effect=side_effect
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", side_effect=side_effect),
         ):
             results = tracker.check_once()
 
@@ -366,7 +393,13 @@ class TestCheckOnce:
         mock_browser = MagicMock()
         tracker._get_browser = MagicMock(return_value=mock_browser)
 
-        with patch("krogetter.tracker.fetch_product_web", return_value=product):
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+
+        with (
+            patch("krogetter.tracker.prepare_session", return_value=(mock_page, None, mock_context)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+        ):
             results = tracker.check_once()
 
         assert results == []

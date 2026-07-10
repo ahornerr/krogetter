@@ -5,12 +5,13 @@ import pathlib
 from unittest.mock import MagicMock, Mock, patch
 
 from krogetter.api.kroger_web import (
-    _extract_initial_state,
     _fetch_product_data_api,
     _get_product_data,
     _parse_price,
     _parse_product_data,
     fetch_product,
+    fetch_product_data,
+    prepare_session,
 )
 
 FIXTURE_PATH = pathlib.Path(__file__).resolve().parent / "initial_state.json"
@@ -44,26 +45,6 @@ class TestParsePrice:
 
     def test_dollar_with_cents(self) -> None:
         assert _parse_price("$0.99") == 0.99
-
-
-# ---------------------------------------------------------------------------
-# _extract_initial_state
-# ---------------------------------------------------------------------------
-
-class TestExtractInitialState:
-    def test_returns_dict_on_success(self) -> None:
-        """_extract_initial_state returns the parsed JSON dict."""
-        fixture = load_fixture()
-        page = Mock()
-        page.evaluate.return_value = json.dumps(fixture)
-        result = _extract_initial_state(page)
-        assert result == fixture
-
-    def test_returns_none_on_null_result(self) -> None:
-        """_extract_initial_state returns None when evaluate returns None."""
-        page = Mock()
-        page.evaluate.return_value = None
-        assert _extract_initial_state(page) is None
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +151,26 @@ class TestParseProductData:
         assert product.price is not None
         assert product.price.synthetic_description == "Buy 2 Get 1 Free"
 
+    def test_parses_availability_and_inventory(self) -> None:
+        """PICKUP modality: available=True, inventory_level='HIGH'."""
+        state = load_fixture()
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825", "PICKUP")
+        assert product is not None
+        assert product.price is not None
+        assert product.price.available is True
+        assert product.price.inventory_level == "HIGH"
+
+    def test_delivery_modality_unavailable(self) -> None:
+        """DELIVERY modality: available=False, inventory_level=None."""
+        state = load_fixture()
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825", "DELIVERY")
+        assert product is not None
+        assert product.price is not None
+        assert product.price.available is False
+        assert product.price.inventory_level is None
+
     def test_returns_none_for_empty_data(self) -> None:
         assert _parse_product_data({}, "0004900004825") is None
 
@@ -200,8 +201,8 @@ class TestFetchProduct:
             mock_cm.__enter__.return_value = mock_browser
             mock_ip_cls.return_value = mock_cm
 
-            # page.evaluate is called by _safe_evaluate for the product API.
-            # It returns {status, body} from the fetch() call.
+            # page.evaluate is called by _fetch_product_data_api.
+            # No zip_code → no store selection → only one evaluate call.
             mock_page.evaluate.return_value = {
                 "status": 200,
                 "body": json.dumps({"data": {"products": [product_data]}}),
@@ -214,16 +215,15 @@ class TestFetchProduct:
         assert result.price is not None
         assert result.price.regular == 11.99
         assert result.price.promo_description == "Buy 2 Get 1 Free"
+        assert result.price.available is True
+        assert result.price.inventory_level == "HIGH"
 
-        # Verify navigation calls: homepage warmup + product page + robots.txt
-        assert mock_page.goto.call_count == 3
+        # Verify navigation: homepage + robots.txt (no product page load)
+        assert mock_page.goto.call_count == 2
         mock_page.goto.assert_any_call(
             "https://www.kingsoopers.com/",
             wait_until="domcontentloaded",
             timeout=30000,
-        )
-        mock_page.goto.assert_any_call(
-            url, wait_until="domcontentloaded", timeout=30000
         )
         mock_page.goto.assert_any_call(
             "https://www.kingsoopers.com/robots.txt",
@@ -316,4 +316,84 @@ class TestFetchProduct:
     def test_invalid_url_returns_none(self) -> None:
         """A URL from a non-Kroger domain returns None."""
         result = fetch_product("https://example.com/product/0004900004825")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# prepare_session + fetch_product_data (batch pattern)
+# ---------------------------------------------------------------------------
+
+class TestPrepareSession:
+    def test_navigates_homepage_and_robots_txt(self) -> None:
+        """prepare_session loads homepage then robots.txt, no product page."""
+        mock_browser = MagicMock()
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+
+        mock_browser.new_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+
+        page, laf_headers, ctx = prepare_session(
+            mock_browser, "https://www.kingsoopers.com/"
+        )
+
+        assert page is mock_page
+        assert ctx is mock_context
+        assert laf_headers is None  # no zip_code → no store selection
+
+        # Homepage + robots.txt only (no product page)
+        assert mock_page.goto.call_count == 2
+        mock_page.goto.assert_any_call(
+            "https://www.kingsoopers.com/",
+            wait_until="domcontentloaded",
+            timeout=30000,
+        )
+        mock_page.goto.assert_any_call(
+            "https://www.kingsoopers.com/robots.txt",
+            wait_until="domcontentloaded",
+            timeout=30000,
+        )
+
+
+class TestFetchProductData:
+    def test_fetches_and_parses_product(self) -> None:
+        """fetch_product_data calls the API and parses the result."""
+        fixture = load_fixture()
+        product_data = _get_product_data(fixture, "0004900004825")
+
+        mock_page = MagicMock()
+        mock_page.evaluate.return_value = {
+            "status": 200,
+            "body": json.dumps({"data": {"products": [product_data]}}),
+        }
+
+        result = fetch_product_data(mock_page, "0004900004825")
+
+        assert result is not None
+        assert result.upc == "0004900004825"
+        assert result.price is not None
+        assert result.price.regular == 11.99
+        assert result.price.available is True
+        assert result.price.inventory_level == "HIGH"
+
+    def test_returns_none_on_api_failure(self) -> None:
+        """Returns None when the API returns an error."""
+        mock_page = MagicMock()
+        mock_page.evaluate.return_value = {
+            "status": 400,
+            "body": '{"errors": []}',
+        }
+
+        result = fetch_product_data(mock_page, "0004900004825")
+        assert result is None
+
+    def test_returns_none_when_no_products(self) -> None:
+        """Returns None when the API returns an empty products list."""
+        mock_page = MagicMock()
+        mock_page.evaluate.return_value = {
+            "status": 200,
+            "body": '{"data": {"products": []}}',
+        }
+
+        result = fetch_product_data(mock_page, "0004900004825")
         assert result is None
