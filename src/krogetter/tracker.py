@@ -10,7 +10,7 @@ import httpx
 
 from krogetter.api.kroger_web import fetch_product_data, prepare_session
 from krogetter.detector import ChangeEvent, detect_change
-from krogetter.models import PriceSnapshot, TrackedItem
+from krogetter.models import PriceSnapshot, Product, TrackedItem
 from krogetter.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -194,19 +194,6 @@ class Tracker:
             logger.info("Could not fetch product for %s (%s)", item.upc, item.label)
             return []
 
-        # Update the item label from the product description if it was
-        # auto-derived (matches the slug-based label or is the bare UPC)
-        from krogetter.url import slug_to_label
-        auto_labels = {slug_to_label(item.url), item.upc}
-        if item.label in auto_labels and product.description:
-            new_label = product.description
-            if product.brand:
-                new_label = f"{product.brand} {product.description}"
-            if new_label != item.label:
-                item.label = new_label
-                self._storage.update_item_label(item.upc, new_label)
-                logger.info("Updated label for %s: %s", item.upc, new_label)
-
         if product.price is None:
             logger.info("Product %s (%s) has no price data", item.upc, item.label)
             return []
@@ -245,6 +232,37 @@ class Tracker:
                     )
 
         return changes
+
+    def fetch_product_for_item(self, item: TrackedItem) -> Product | None:
+        """Fetch product data for a new item without storing it.
+
+        Used by the server's create_item endpoint to get the product
+        description and initial price before storing the item.
+        """
+        key = _store_key(item)
+        session = self._get_session(key)
+        if session is None:
+            return None
+        client, laf_headers = session
+        try:
+            product = fetch_product_data(client, item.upc, laf_headers, item.modality)
+        except Exception:
+            product = None
+
+        # If fetch failed (403/429), refresh session and retry
+        if product is None:
+            logger.info("Product fetch failed for %s, refreshing session...", item.upc)
+            session = self._get_session(key, force_refresh=True)
+            if session is None:
+                return None
+            client, laf_headers = session
+            try:
+                return fetch_product_data(client, item.upc, laf_headers, item.modality)
+            except Exception:
+                logger.warning("Product fetch failed for %s after refresh", item.upc, exc_info=True)
+                return None
+
+        return product
 
     def check_item(self, item: TrackedItem) -> list[ChangeEvent]:
         """Check a single tracked item. Returns list of changes (empty if none).

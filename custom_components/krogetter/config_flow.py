@@ -91,7 +91,6 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
             try:
                 await api.add_item(
                     url=user_input["url"],
-                    label=user_input.get("label"),
                     zip_code=user_input.get("zip_code"),
                     delivery=user_input.get("delivery", False),
                     store_id=user_input.get("store_id"),
@@ -112,9 +111,6 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema({
             vol.Required("url"): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.URL)
-            ),
-            vol.Optional("label"): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.TEXT)
             ),
             vol.Optional("zip_code"): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.TEXT)

@@ -7,7 +7,6 @@ from pydantic import BaseModel, ConfigDict
 
 class ItemCreateRequest(BaseModel):
     url: str
-    label: str | None = None
     zip_code: str | None = None
     delivery: bool = False
     store_id: str | None = None

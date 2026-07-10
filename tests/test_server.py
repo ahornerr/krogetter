@@ -22,6 +22,7 @@ def client(data_dir: Path):
     """Create a TestClient with a fresh app backed by a temp dir."""
     with (
         patch("krogetter.server.app._start_polling_thread", return_value=None),
+        patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=None),
         patch("krogetter.tracker.Tracker.check_item", return_value=[]),
         patch("krogetter.tracker.Tracker.check_once", return_value=[]),
     ):
@@ -39,41 +40,52 @@ class TestHealth:
         assert data["status"] == "ok"
 
 
+from krogetter.models import PriceSnapshot, Product
+
+
+def _make_product(upc: str = "0004900004825") -> Product:
+    """Create a mock Product for testing."""
+    return Product(
+        product_id=upc,
+        upc=upc,
+        description="Coca-Cola Classic 12 Pack",
+        brand="Coca-Cola",
+        size="12pk",
+        categories=["Beverages"],
+        price=PriceSnapshot(regular=11.99, promo=0.0, promo_description=None, checked_at="2026-07-10T00:00:00+00:00"),
+        image_url=None,
+    )
+
+
 class TestItems:
     """Tests for item CRUD endpoints."""
 
     def test_create_item_with_url(self, client: TestClient) -> None:
-        response = client.post(
-            "/api/items",
-            json={
-                "url": "https://www.kingsoopers.com/p/coca-cola/0004900004825",
-                "label": "Coke Classic",
-            },
-        )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            response = client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
         assert response.status_code == 201
         data = response.json()
         assert data["upc"] == "0004900004825"
-        assert "Coke" in data["label"]
+        assert "Coca-Cola" in data["label"]
         assert data["url"] == "https://www.kingsoopers.com/p/coca-cola/0004900004825"
 
-    def test_create_item_with_bare_upc(self, client: TestClient) -> None:
-        response = client.post(
-            "/api/items",
-            json={
-                "url": "0004900004825",
-                "label": "Coke Classic",
-            },
-        )
-        assert response.status_code == 201
-        data = response.json()
-        assert data["upc"] == "0004900004825"
-        assert data["label"] == "Coke Classic"
+    def test_create_item_fetch_fails_returns_422(self, client: TestClient) -> None:
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=None):
+            response = client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
+        assert response.status_code == 422
+        assert "Could not fetch" in response.json()["detail"]
 
     def test_create_item_duplicate_upc(self, client: TestClient) -> None:
         url = "https://www.kingsoopers.com/p/coca-cola/0004900004825"
-        client.post("/api/items", json={"url": url, "label": "First"})
-
-        response = client.post("/api/items", json={"url": url, "label": "Second"})
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            client.post("/api/items", json={"url": url})
+            response = client.post("/api/items", json={"url": url})
         assert response.status_code == 409
         assert "already being tracked" in response.json()["detail"]
 
@@ -88,24 +100,25 @@ class TestItems:
         assert data == []
 
     def test_list_items_with_one(self, client: TestClient) -> None:
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
-        )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         response = client.get("/api/items")
         assert response.status_code == 200
         data = response.json()
         assert len(data) == 1
         assert data[0]["upc"] == "0004900004825"
-        assert data[0]["latest"] is None  # no history yet
 
     def test_list_items_with_history(self, client: TestClient, data_dir: Path) -> None:
         """Item with history should show latest snapshot."""
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
-        )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         # Manually append history via storage
         from krogetter.models import PriceSnapshot
@@ -132,10 +145,11 @@ class TestItems:
         assert latest["current_price"] == 8.99
 
     def test_delete_item(self, client: TestClient) -> None:
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
-        )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         response = client.delete("/api/items/0004900004825")
         assert response.status_code == 204
@@ -153,10 +167,18 @@ class TestLatest:
     """Tests for GET /api/items/{upc}/latest."""
 
     def test_latest_no_history(self, client: TestClient) -> None:
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+        """Item with no history returns 404."""
+        # Create item with a product that has no price
+        product = Product(
+            product_id="0004900004825", upc="0004900004825",
+            description="Test", brand="Test", size=None, categories=[],
+            price=None, image_url=None,
         )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=product):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         response = client.get("/api/items/0004900004825/latest")
         assert response.status_code == 404
@@ -190,10 +212,18 @@ class TestHistory:
     """Tests for GET /api/items/{upc}/history."""
 
     def test_history_empty(self, client: TestClient) -> None:
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+        """Item with no price history returns empty list."""
+        # Create item with a product that has no price
+        product = Product(
+            product_id="0004900004825", upc="0004900004825",
+            description="Test", brand="Test", size=None, categories=[],
+            price=None, image_url=None,
         )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=product):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         response = client.get("/api/items/0004900004825/history")
         assert response.status_code == 200
@@ -260,10 +290,11 @@ class TestCheck:
         from krogetter.detector import ChangeEvent
 
         # Add an item first
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
-        )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         change = ChangeEvent(
             field="initial",
@@ -295,10 +326,11 @@ class TestCheck:
         from krogetter.models import TrackedItem
 
         # Add an item
-        client.post(
-            "/api/items",
-            json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
-        )
+        with patch("krogetter.tracker.Tracker.fetch_product_for_item", return_value=_make_product()):
+            client.post(
+                "/api/items",
+                json={"url": "https://www.kingsoopers.com/p/coca-cola/0004900004825"},
+            )
 
         item = TrackedItem(
             url="https://www.kingsoopers.com/p/coca-cola/0004900004825",

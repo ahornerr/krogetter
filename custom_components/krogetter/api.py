@@ -28,11 +28,9 @@ class KrogetterAPI:
             resp.raise_for_status()
             return await resp.json()
 
-    async def add_item(self, url: str, label: str | None = None, zip_code: str | None = None, delivery: bool = False, store_id: str | None = None) -> dict:
+    async def add_item(self, url: str, zip_code: str | None = None, delivery: bool = False, store_id: str | None = None) -> dict:
         """Add a tracked item."""
         payload: dict[str, str | bool] = {"url": url}
-        if label:
-            payload["label"] = label
         if zip_code:
             payload["zip_code"] = zip_code
         if delivery:

@@ -18,27 +18,6 @@ KROGER_BRAND_DOMAINS = frozenset({
 _UPC_PATTERN = re.compile(r"/(\d{13})$")
 
 
-def slug_to_label(url: str) -> str | None:
-    """Derive a human-readable label from a Kroger product URL slug.
-
-    e.g. https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack/0004900004825
-    → "Coca Cola Vanilla Zero Sugar Fridge Pack Cans 12 Fl Oz 12 Pack"
-
-    Returns None if the URL has no slug (e.g. bare UPC input).
-    """
-    parsed = urlparse(url)
-    path = parsed.path.rstrip("/")
-    # Path is like /p/{slug}/{upc}
-    segments = [s for s in path.split("/") if s]
-    if len(segments) < 3 or segments[0] != "p":
-        return None
-    slug = segments[1]
-    # Title-case each word, keeping numbers as-is
-    words = slug.split("-")
-    label = " ".join(w.capitalize() if not w[0].isdigit() else w for w in words)
-    return label
-
-
 def parse_product_url(url: str) -> str:
     """Extract the product ID from a Kroger family product URL.
 
