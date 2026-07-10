@@ -4,9 +4,9 @@ Track sale prices and offers on Kroger family store websites (King Soopers, Krog
 
 ## How It Works
 
-Krogetter uses [invisible_playwright](https://github.com/feder-cr/invisible_playwright) (a stealth Firefox build with C++-patched fingerprinting) to load product pages on Kroger family store websites. The product page HTML contains a server-rendered `__INITIAL_STATE__` JSON blob with everything: prices, offers, promo descriptions, sale dates, and store-specific data. No API keys, no OAuth, no login required.
+Krogetter uses [invisible_playwright](https://github.com/feder-cr/invisible_playwright) (a stealth Firefox build with C++-patched fingerprinting) to call the Kroger product v2 API (`/atlas/v1/product/v2/products`) from within a real browser context. This gets prices, offers, promo descriptions, sale dates, availability, and inventory levels — all without API keys, OAuth, or login.
 
-Store selection is done via the Kroger modality API — `POST /atlas/v1/modality/options` to find stores near a ZIP code, then `PUT /atlas/v1/modality/preferences` to select one. This sets a cookie that the server respects for subsequent page loads.
+Store selection is done via the Kroger modality API — `POST /atlas/v1/modality/options` to find stores near a ZIP code, then `PUT /atlas/v1/modality/preferences` to select one. The resulting LAF (Location And Fulfillment) headers are passed to the product API for store-specific pricing.
 
 ## Architecture
 
@@ -212,7 +212,7 @@ kingsoopers.com, kroger.com, fredmeyer.com, ralphs.com, smithsfoodanddrug.com, h
 
 ## How Offer Parsing Works
 
-The `__INITIAL_STATE__` JSON contains an `offers[]` array with offer details:
+The product v2 API response contains an `offers[]` array with offer details:
 
 ```json
 {

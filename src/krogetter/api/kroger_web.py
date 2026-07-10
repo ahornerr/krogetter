@@ -1,9 +1,8 @@
 """Stealth Firefox product fetcher using the Kroger product v2 API.
 
 Fetches product/price/offer data by calling the Kroger product v2 API
-directly from the browser context (with Akamai cookies). The website
-moved from SSR to client-side fetching, so __INITIAL_STATE__ no longer
-contains product data — we call the same API the SPA would call.
+directly from the browser context (with Akamai cookies). No API keys,
+no OAuth, no login required.
 """
 
 import json
@@ -17,119 +16,10 @@ from krogetter.url import parse_product_url
 logger = logging.getLogger(__name__)
 
 
-def _extract_initial_state(page: Any) -> dict[str, Any] | None:
-    """Extract __INITIAL_STATE__ from a loaded page via eval() in page context.
-
-    The __INITIAL_STATE__ is set by a <script> tag that assigns it via eval()
-    (e.g. ``eval(function(p,a,c,k,e,d){...})``). It is NOT a simple
-    ``window.__INITIAL_STATE__ = {…}`` literal — the script must be evaluated
-    in the page context for the variable to become accessible on window.
-    Using page.evaluate() is the only reliable way to trigger this
-    deferred assignment.
-    """
-    result = page.evaluate('''() => {
-        // First check if __INITIAL_STATE__ is already on window
-        // (may be set by an earlier script that already executed)
-        if (typeof window.__INITIAL_STATE__ !== 'undefined') {
-            try {
-                return JSON.stringify(window.__INITIAL_STATE__);
-            } catch(e) {}
-        }
-
-        // Try each script that mentions __INITIAL_STATE__
-        const scripts = document.querySelectorAll('script');
-        let matchCount = 0;
-        for (const s of scripts) {
-            if (s.textContent && s.textContent.includes('__INITIAL_STATE__')) {
-                matchCount++;
-                try {
-                    eval(s.textContent);
-                    if (typeof window.__INITIAL_STATE__ !== 'undefined') {
-                        return JSON.stringify(window.__INITIAL_STATE__);
-                    }
-                } catch(e) {
-                    // This script failed; try the next one
-                }
-            }
-        }
-        return JSON.stringify({__error: 'no script successfully set __INITIAL_STATE__', scriptMatches: matchCount, totalScripts: scripts.length});
-    }''')
-    if not result:
-        logger.debug("_extract_initial_state: page.evaluate returned empty/null")
-        return None
-    try:
-        parsed = json.loads(result)
-    except json.JSONDecodeError as exc:
-        logger.debug("_extract_initial_state: failed to parse result as JSON: %s", exc)
-        return None
-    if isinstance(parsed, dict) and "__error" in parsed:
-        logger.debug("_extract_initial_state: %s", parsed["__error"])
-        return None
-    logger.debug(
-        "_extract_initial_state: success, top-level keys: %s",
-        list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
-    )
-    return parsed
-
-
 def _parse_price(price_str: str) -> float:
     """Parse a price string like 'USD 11.99' or '$11.99' into a float."""
     cleaned = price_str.replace("USD", "").replace("$", "").strip()
     return float(cleaned)
-
-
-def _get_product_data(state: dict[str, Any], upc: str) -> dict[str, Any] | None:
-    """Extract the product data dict from __INITIAL_STATE__.
-
-    Tries calypso.domains.products.{upc}.data first, then falls back to
-    calypso.useCases.getProducts.pdpSSR.response.data.products[0].
-    """
-    calypso: dict[str, Any] = state.get("calypso", {})
-    if not calypso:
-        logger.debug(
-            "State has no 'calypso' key; top-level keys: %s",
-            list(state.keys()),
-        )
-        return None
-
-    # Primary path: calypso.domains.products.{upc}.data
-    products_domain: dict[str, Any] = calypso.get("domains", {}).get("products", {})
-    if products_domain:
-        available_upcs = list(products_domain.keys())
-        logger.debug(
-            "calypso.domains.products has UPCs: %s (looking for %s)",
-            available_upcs,
-            upc,
-        )
-    product_data: dict[str, Any] = products_domain.get(upc, {}).get("data", {})
-    if product_data:
-        return product_data
-
-    # Fallback: calypso.useCases.getProducts.pdpSSR.response.data.products[0]
-    products: list[dict[str, Any]] = (
-        calypso.get("useCases", {})
-        .get("getProducts", {})
-        .get("pdpSSR", {})
-        .get("response", {})
-        .get("data", {})
-        .get("products", [])
-    )
-    if products:
-        logger.debug(
-            "Primary product path miss; using pdpSSR fallback (%d products)",
-            len(products),
-        )
-        return products[0]
-
-    # Log what we actually see for debugging
-    logger.debug(
-        "Product not found in state. calypso keys: %s, "
-        "calypso.domains keys: %s, calypso.useCases keys: %s",
-        list(calypso.keys()),
-        list(calypso.get("domains", {}).keys()),
-        list(calypso.get("useCases", {}).keys()),
-    )
-    return None
 
 
 def _parse_product_data(
@@ -478,10 +368,9 @@ def _fetch_product_data_api(
 ) -> dict[str, Any] | None:
     """Fetch product data via the Kroger product v2 API from the browser context.
 
-    The website moved from SSR (product data in __INITIAL_STATE__) to
-    client-side fetching. The SPA calls this API after page load to get
-    product/price/offer data. We call it directly from the browser context
-    (with Akamai cookies) instead of relying on __INITIAL_STATE__.
+    Calls the same API the SPA calls after page load to get
+    product/price/offer data. Runs inside the browser context
+    (with Akamai cookies and TLS fingerprint).
 
     Args:
         page: A Playwright page with an active Akamai session.

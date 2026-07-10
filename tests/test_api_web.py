@@ -2,11 +2,10 @@
 
 import json
 import pathlib
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 from krogetter.api.kroger_web import (
     _fetch_product_data_api,
-    _get_product_data,
     _parse_price,
     _parse_product_data,
     fetch_product,
@@ -14,11 +13,11 @@ from krogetter.api.kroger_web import (
     prepare_session,
 )
 
-FIXTURE_PATH = pathlib.Path(__file__).resolve().parent / "initial_state.json"
+FIXTURE_PATH = pathlib.Path(__file__).resolve().parent / "product_data.json"
 
 
 def load_fixture() -> dict:
-    """Load the __INITIAL_STATE__ JSON fixture."""
+    """Load the product data fixture (from product v2 API response shape)."""
     with open(FIXTURE_PATH) as f:
         return json.load(f)
 
@@ -48,52 +47,12 @@ class TestParsePrice:
 
 
 # ---------------------------------------------------------------------------
-# _get_product_data
-# ---------------------------------------------------------------------------
-
-class TestGetProductData:
-    def test_primary_path_from_fixture(self) -> None:
-        """Extract product data from calypso.domains.products.{upc}.data."""
-        state = load_fixture()
-        data = _get_product_data(state, "0004900004825")
-        assert data is not None
-        assert "item" in data
-        assert "price" in data
-        assert "offers" in data
-
-    def test_returns_none_for_missing_upc(self) -> None:
-        """Neither the domains.products path nor the useCases path has the UPC."""
-        # Build a state that has no matching product in either path
-        state: dict = {"calypso": {"domains": {"products": {}}}}
-        assert _get_product_data(state, "9999999999999") is None
-
-    def test_fallback_to_use_cases(self) -> None:
-        """When domains.products is empty, falls back to useCases path."""
-        state = load_fixture()
-        # Create a state where the primary path is empty but useCases is populated
-        modified = dict(state)
-        modified["calypso"] = dict(state["calypso"])
-        # Remove the products from domains but keep useCases
-        if "products" in modified["calypso"].get("domains", {}):
-            modified["calypso"]["domains"] = dict(modified["calypso"]["domains"])
-            modified["calypso"]["domains"]["products"] = {}
-
-        data = _get_product_data(modified, "0004900004825")
-        assert data is not None
-        assert "item" in data
-
-    def test_returns_none_when_no_data_found(self) -> None:
-        assert _get_product_data({}, "0004900004825") is None
-
-
-# ---------------------------------------------------------------------------
 # _parse_product_data
 # ---------------------------------------------------------------------------
 
 class TestParseProductData:
     def test_parses_product_from_fixture(self) -> None:
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.upc == "0004900004825"
@@ -105,16 +64,14 @@ class TestParseProductData:
         assert product.image_url is not None
 
     def test_parses_price_correctly(self) -> None:
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.regular == 11.99
 
     def test_parses_offers_correctly(self) -> None:
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
@@ -124,16 +81,14 @@ class TestParseProductData:
         assert product.price.offer_end == "2026-07-21T23:59:59"
 
     def test_parses_fulfillment_price_string(self) -> None:
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.fulfillment_price_string == "Buy 2 Get 1 Free"
 
     def test_has_offer_is_true_when_offer_exists(self) -> None:
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
@@ -144,8 +99,7 @@ class TestParseProductData:
         assert product.price.effective_unit_price == 7.99
 
     def test_synthetic_description_prefers_fulfillment_price_string(self) -> None:
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
@@ -153,8 +107,7 @@ class TestParseProductData:
 
     def test_parses_availability_and_inventory(self) -> None:
         """PICKUP modality: available=True, inventory_level='HIGH'."""
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825", "PICKUP")
         assert product is not None
         assert product.price is not None
@@ -163,8 +116,7 @@ class TestParseProductData:
 
     def test_delivery_modality_unavailable(self) -> None:
         """DELIVERY modality: available=False, inventory_level=None."""
-        state = load_fixture()
-        product_data = _get_product_data(state, "0004900004825")
+        product_data = load_fixture()
         product = _parse_product_data(product_data, "0004900004825", "DELIVERY")
         assert product is not None
         assert product.price is not None
@@ -186,7 +138,7 @@ class TestFetchProduct:
     def test_with_url_extracts_and_parses(self) -> None:
         """fetch_product navigates, calls product API, and parses the result."""
         fixture = load_fixture()
-        product_data = _get_product_data(fixture, "0004900004825")
+        product_data = load_fixture()
         url = "https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack/0004900004825"
 
         with patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls:
@@ -239,7 +191,7 @@ class TestFetchProduct:
     def test_with_provided_browser_does_not_close(self) -> None:
         """When a browser is provided, it is NOT closed by fetch_product."""
         fixture = load_fixture()
-        product_data = _get_product_data(fixture, "0004900004825")
+        product_data = load_fixture()
         url = "https://www.kingsoopers.com/p/test-product/0004900004825"
 
         mock_browser = MagicMock()
@@ -359,7 +311,7 @@ class TestFetchProductData:
     def test_fetches_and_parses_product(self) -> None:
         """fetch_product_data calls the API and parses the result."""
         fixture = load_fixture()
-        product_data = _get_product_data(fixture, "0004900004825")
+        product_data = load_fixture()
 
         mock_page = MagicMock()
         mock_page.evaluate.return_value = {
