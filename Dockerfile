@@ -12,13 +12,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
+# Install Python dependencies (cached unless pyproject.toml changes)
 COPY pyproject.toml .
-COPY src/ src/
-RUN pip install --no-cache-dir -e .
+RUN mkdir -p src/krogetter && touch src/krogetter/__init__.py && \
+    pip install --no-cache-dir -e .
 
-# Download invisible_playwright Firefox binary (~100MB)
+# Download invisible_playwright Firefox binary (~100MB, cached unless deps change)
 RUN python -m invisible_playwright fetch
+
+# Copy actual source code (changes frequently, doesn't invalidate dep layers)
+COPY src/ src/
 
 # Data directory
 VOLUME ["/data"]

@@ -30,10 +30,13 @@ class PriceSnapshot:
     offer_start: str | None = None              # ISO date string
     offer_end: str | None = None                # ISO date string
     fulfillment_price_string: str | None = None  # e.g. "Buy 2 Get 1 Free" from fulfillmentSummaries
+    available: bool = True                      # False if product has no pricing at selected store
 
     @property
     def is_on_sale(self) -> bool:
         """True if there's a price discount OR an active offer."""
+        if not self.available:
+            return False
         return self.has_offer or (self.promo > 0 and self.promo < self.regular)
 
     @property

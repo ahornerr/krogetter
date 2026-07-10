@@ -148,13 +148,21 @@ def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None
         promo_price = 0.0
 
     # Parse fulfillment price string (promo text displayed next to price)
+    fulfillment_summaries: list[dict[str, Any]] = product_data.get(
+        "fulfillmentSummaries", []
+    )
     fulfillment_price_string: str | None = None
-    for fs in product_data.get("fulfillmentSummaries", []):
+    for fs in fulfillment_summaries:
         reg: dict[str, Any] = fs.get("regular", {})
         ps: str | None = reg.get("priceString")
         if ps:
             fulfillment_price_string = ps
             break
+
+    # A product is "available" if it has fulfillment summaries with pricing.
+    # When a product is not carried at the selected store, fulfillmentSummaries
+    # is empty and storePrices is empty (regular price = 0.0).
+    available = len(fulfillment_summaries) > 0
 
     snapshot = PriceSnapshot(
         regular=regular_price,
@@ -165,6 +173,7 @@ def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None
         offer_start=offer_start,
         offer_end=offer_end,
         fulfillment_price_string=fulfillment_price_string,
+        available=available,
     )
 
     return Product(
@@ -179,6 +188,34 @@ def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None
     )
 
 
+def _safe_evaluate(page: Any, script: str, arg: Any = None, retries: int = 5) -> Any:
+    """Evaluate JS in page context with retries for navigation-induced context destruction.
+    
+    invisible_playwright runs a real browser (not native headless), so SPA
+    navigations can destroy the execution context mid-evaluate. We call
+    window.stop() between retries to halt all pending navigations and
+    stabilize the page before trying again.
+    """
+    import time
+    
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return page.evaluate(script, arg)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries - 1:
+                logger.debug("evaluate failed (attempt %d): %s — retrying", attempt + 1, exc)
+                # Stop all pending navigations/timers/network activity
+                # to stabilize the execution context for the next attempt
+                try:
+                    page.evaluate("window.stop()")
+                except Exception:
+                    pass
+                time.sleep(2)
+    raise last_exc  # type: ignore[misc]
+
+
 def select_store(
     page: Any,
     zip_code: str,
@@ -189,6 +226,9 @@ def select_store(
 
     Must be called after loading at least one page (to get Akamai cookies)
     and after warming up the session on the homepage.
+
+    Uses page.evaluate(fetch(...)) so the requests run inside the browser's
+    JS context with the correct Akamai cookies and TLS fingerprint.
 
     Args:
         page: A Playwright page with an active Akamai session.
@@ -201,7 +241,8 @@ def select_store(
         True if the store was successfully selected, False otherwise.
     """
     # Step 1: Search for stores by ZIP
-    stores_result = page.evaluate(
+    stores_result = _safe_evaluate(
+        page,
         """async (zip) => {
         const resp = await fetch('/atlas/v1/modality/options', {
             method: 'POST',
@@ -316,7 +357,8 @@ def select_store(
         "activeModality": modality,
     }
 
-    put_result = page.evaluate(
+    put_result = _safe_evaluate(
+        page,
         """async (body) => {
         const resp = await fetch('/atlas/v1/modality/preferences?filter.restrictLafToFc=false', {
             method: 'PUT',
@@ -399,46 +441,22 @@ def fetch_product(
         context = browser.new_context()
         page = context.new_page()
         try:
-            # If a ZIP code is provided, we need to:
-            # 1. Load any page to get Akamai cookies
-            # 2. Warm up on homepage
-            # 3. Select store via modality API
-            # 4. Then navigate to the product page
-            if zip_code:
-                # Step 1: Load product page first to get Akamai cookies
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_function(
-                    "Array.from(document.querySelectorAll('script')).some(s => s.textContent && s.textContent.includes('__INITIAL_STATE__'))",
-                    timeout=10000,
-                )
-                page.wait_for_timeout(1000)
+            # Determine the domain for homepage warmup
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            homepage_url = f"{parsed.scheme}://{parsed.netloc}/"
 
-                # Step 2: Warm up Akamai on homepage
-                page.goto(
-                    "https://www.kingsoopers.com/",
-                    wait_until="domcontentloaded",
-                    timeout=30000,
-                )
-                page.wait_for_timeout(5000)
+            # Warm up Akamai session on homepage first.
+            # Going directly to a product page gets "Access Denied" because
+            # Akamai needs to set cookies via the homepage challenge first.
+            page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
 
-                # Step 3: Select store
-                if not select_store(page, zip_code, modality, store_id):
-                    logger.warning(
-                        "Store selection failed; continuing with default store"
-                    )
-
-                # Step 4: Navigate to product page with selected store
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            else:
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-
-            # Wait for __INITIAL_STATE__ script tag to appear in the DOM.
-            # It's server-side rendered, so it should be present immediately
-            # after domcontentloaded, but give a short grace period for any
-            # deferred script execution.
+            # Now load the product page with an established Akamai session
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_function(
                 "Array.from(document.querySelectorAll('script')).some(s => s.textContent && s.textContent.includes('__INITIAL_STATE__'))",
-                timeout=10000,
+                timeout=20000,
             )
             page.wait_for_timeout(1000)
 
@@ -446,6 +464,56 @@ def fetch_product(
             if state is None:
                 logger.warning("No __INITIAL_STATE__ found for %r", url)
                 return None
+
+            # If a ZIP code is provided, try to select a store and reload
+            # to get store-specific pricing. If this fails, we fall back to
+            # the IP-geolocated pricing from the first load.
+            if zip_code:
+                # Navigate to a static page on the same origin to kill the SPA
+                # and stabilize the execution context for API calls.
+                # The SPA's client-side router destroys JS execution contexts
+                # mid-evaluate; robots.txt has no SPA so the context is stable.
+                from urllib.parse import urlparse
+                static_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}/robots.txt"
+                page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(500)
+
+                store_selected = False
+                try:
+                    store_selected = select_store(
+                        page, zip_code, modality, store_id
+                    )
+                except Exception:
+                    logger.warning(
+                        "Store selection error; using default store pricing",
+                        exc_info=True,
+                    )
+
+                if store_selected:
+                    # Reload product page with the selected store cookie
+                    try:
+                        page.goto(
+                            url,
+                            wait_until="domcontentloaded",
+                            timeout=60000,
+                        )
+                        page.wait_for_function(
+                            "Array.from(document.querySelectorAll('script')).some(s => s.textContent && s.textContent.includes('__INITIAL_STATE__'))",
+                            timeout=20000,
+                        )
+                        page.wait_for_timeout(1000)
+                        new_state = _extract_initial_state(page)
+                        if new_state is not None:
+                            state = new_state
+                    except Exception:
+                        logger.warning(
+                            "Product page reload failed after store selection; "
+                            "using default store pricing"
+                        )
+                else:
+                    logger.warning(
+                        "Store selection failed; using default store pricing"
+                    )
 
             product = _parse_product_from_state(state, upc)
             if product is None:
