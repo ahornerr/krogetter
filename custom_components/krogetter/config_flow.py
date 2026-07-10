@@ -62,10 +62,6 @@ class KrogetterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
     """Options flow with a menu to add items, remove items, and configure settings."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        super().__init__(config_entry)
-
     def _get_api(self) -> KrogetterAPI:
         """Get the API client from hass data."""
         data = self.hass.data[DOMAIN][self.config_entry.entry_id]
