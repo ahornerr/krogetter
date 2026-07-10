@@ -30,8 +30,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Register services
-    await _async_register_services(hass, api, coordinator)
+    # Register services (only once per hass instance)
+    if not hass.data.get(DOMAIN, {}).get("services_registered"):
+        await _async_register_services(hass, api, coordinator)
+        hass.data.setdefault(DOMAIN, {})["services_registered"] = True
 
     return True
 
@@ -47,6 +49,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        # Remove services when the last entry unloads
+        if not hass.data[DOMAIN]:
+            for service_name in ("add_item", "remove_item", "check_now"):
+                hass.services.async_remove(DOMAIN, service_name)
     return unload_ok
 
 async def _async_register_services(hass: HomeAssistant, api: KrogetterAPI, coordinator: KrogetterCoordinator) -> None:

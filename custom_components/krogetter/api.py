@@ -12,6 +12,7 @@ class KrogetterAPI:
     def __init__(self, session: aiohttp.ClientSession, base_url: str) -> None:
         self._session = session
         self._base_url = base_url.rstrip("/")
+        self._timeout = aiohttp.ClientTimeout(total=30)
 
     async def health_check(self) -> bool:
         """Return True if server is reachable."""
@@ -23,7 +24,7 @@ class KrogetterAPI:
 
     async def get_items(self) -> list[dict]:
         """Get all tracked items with latest snapshots."""
-        async with self._session.get(f"{self._base_url}/api/items") as resp:
+        async with self._session.get(f"{self._base_url}/api/items", timeout=self._timeout) as resp:
             resp.raise_for_status()
             return await resp.json()
 
@@ -38,29 +39,29 @@ class KrogetterAPI:
             payload["delivery"] = delivery
         if store_id:
             payload["store_id"] = store_id
-        async with self._session.post(f"{self._base_url}/api/items", json=payload) as resp:
+        async with self._session.post(f"{self._base_url}/api/items", json=payload, timeout=self._timeout) as resp:
             resp.raise_for_status()
             return await resp.json()
 
     async def remove_item(self, upc: str) -> None:
         """Remove a tracked item."""
-        async with self._session.delete(f"{self._base_url}/api/items/{upc}") as resp:
+        async with self._session.delete(f"{self._base_url}/api/items/{upc}", timeout=self._timeout) as resp:
             resp.raise_for_status()
 
     async def check_item(self, upc: str) -> dict:
         """Trigger a check for a single item."""
-        async with self._session.post(f"{self._base_url}/api/items/{upc}/check") as resp:
+        async with self._session.post(f"{self._base_url}/api/items/{upc}/check", timeout=self._timeout) as resp:
             resp.raise_for_status()
             return await resp.json()
 
     async def check_all(self) -> list[dict]:
         """Trigger a check for all items."""
-        async with self._session.post(f"{self._base_url}/api/check") as resp:
+        async with self._session.post(f"{self._base_url}/api/check", timeout=self._timeout) as resp:
             resp.raise_for_status()
             return await resp.json()
 
     async def get_history(self, upc: str, limit: int = 100) -> list[dict]:
         """Get price history for an item."""
-        async with self._session.get(f"{self._base_url}/api/items/{upc}/history", params={"limit": limit}) as resp:
+        async with self._session.get(f"{self._base_url}/api/items/{upc}/history", params={"limit": limit}, timeout=self._timeout) as resp:
             resp.raise_for_status()
             return await resp.json()
