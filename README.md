@@ -4,13 +4,13 @@ Track sale prices and offers on Kroger family store websites (King Soopers, Krog
 
 ## How It Works
 
-Krogetter uses [Camoufox](https://github.com/daijro/camoufox) (a stealth Firefox build) to load product pages on Kroger family store websites. The product page HTML contains a server-rendered `__INITIAL_STATE__` JSON blob with everything: prices, offers, promo descriptions, sale dates, and store-specific data. No API keys, no OAuth, no login required.
+Krogetter uses [invisible_playwright](https://github.com/feder-cr/invisible_playwright) (a stealth Firefox build with C++-patched fingerprinting) to load product pages on Kroger family store websites. The product page HTML contains a server-rendered `__INITIAL_STATE__` JSON blob with everything: prices, offers, promo descriptions, sale dates, and store-specific data. No API keys, no OAuth, no login required.
 
 Store selection is done via the Kroger modality API — `POST /atlas/v1/modality/options` to find stores near a ZIP code, then `PUT /atlas/v1/modality/preferences` to select one. This sets a cookie that the server respects for subsequent page loads.
 
 ## Architecture
 
-Camoufox requires a full Firefox binary with GTK/NSS system libraries, which cannot run inside Home Assistant's Alpine-based container. Krogetter solves this with a two-part architecture:
+The stealth Firefox binary requires GTK/NSS system libraries that cannot run inside Home Assistant's Alpine-based container. Krogetter solves this with a two-part architecture:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -42,7 +42,7 @@ Camoufox requires a full Firefox binary with GTK/NSS system libraries, which can
 │  Krogetter API Server │ (Docker sidecar)              │
 │                     │                                 │
 │  FastAPI on :8585                                     │
-│  Background polling loop (Camoufox)                   │
+│  Background polling loop (stealth Firefox)             │
 │  Stores tracked_items.json + history.jsonl            │
 └───────────────────────────────────────────────────────┘
 ```
@@ -51,7 +51,7 @@ Camoufox requires a full Firefox binary with GTK/NSS system libraries, which can
 
 ### 1. Run the API server
 
-The API server runs Camoufox and exposes a REST API. Run it as a Docker container alongside Home Assistant:
+The API server runs the stealth Firefox browser and exposes a REST API. Run it as a Docker container alongside Home Assistant:
 
 ```yaml
 # Add to your docker-compose.yml, or create a separate one
@@ -136,8 +136,8 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Download Camoufox browser binary (one-time, ~700MB)
-camoufox fetch
+# Download invisible_playwright Firefox binary (one-time, ~100MB)
+python -m invisible_playwright fetch
 ```
 
 ### Commands
@@ -202,7 +202,7 @@ The API server reads configuration from environment variables:
 | `KROGETTER_DEFAULT_CHAIN` | `KINGSOOPERS` | Default store chain |
 | `KROGETTER_DEFAULT_ZIP` | _(none)_ | Default ZIP for store selection |
 | `KROGETTER_POLL_INTERVAL` | `3600` | Polling interval in seconds |
-| `KROGETTER_USE_WEB_FETCHER` | `true` | Use Camoufox web fetcher |
+| `KROGETTER_USE_WEB_FETCHER` | `true` | Use stealth Firefox web fetcher |
 
 ## Supported Stores
 

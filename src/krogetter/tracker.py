@@ -31,7 +31,7 @@ def _snapshot_from_history(entry: dict) -> PriceSnapshot | None:
 
 
 class Tracker:
-    """Polls tracked items for price changes using the Camoufox web fetcher.
+    """Polls tracked items for price changes using the stealth Firefox web fetcher.
 
     Launches a shared browser instance per polling cycle for efficiency.
     Never crashes on a single item failure — logs the error and continues.
