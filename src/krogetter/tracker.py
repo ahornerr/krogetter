@@ -24,6 +24,7 @@ def _snapshot_from_history(entry: dict) -> PriceSnapshot | None:
             offer_start=entry.get("offer_start"),
             offer_end=entry.get("offer_end"),
             fulfillment_price_string=entry.get("fulfillment_price_string"),
+            available=entry.get("available", True),  # default True for old entries
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Skipping malformed history entry: %s", exc)

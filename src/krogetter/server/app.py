@@ -43,6 +43,7 @@ def _snapshot_to_response(snap: PriceSnapshot) -> SnapshotResponse:
         offer_start=snap.offer_start,
         offer_end=snap.offer_end,
         fulfillment_price_string=snap.fulfillment_price_string,
+        available=snap.available,
         current_price=snap.current_price,
         effective_unit_price=snap.effective_unit_price,
         is_on_sale=snap.is_on_sale,

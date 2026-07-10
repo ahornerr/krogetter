@@ -148,13 +148,21 @@ def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None
         promo_price = 0.0
 
     # Parse fulfillment price string (promo text displayed next to price)
+    fulfillment_summaries: list[dict[str, Any]] = product_data.get(
+        "fulfillmentSummaries", []
+    )
     fulfillment_price_string: str | None = None
-    for fs in product_data.get("fulfillmentSummaries", []):
+    for fs in fulfillment_summaries:
         reg: dict[str, Any] = fs.get("regular", {})
         ps: str | None = reg.get("priceString")
         if ps:
             fulfillment_price_string = ps
             break
+
+    # A product is "available" if it has fulfillment summaries with pricing.
+    # When a product is not carried at the selected store, fulfillmentSummaries
+    # is empty and storePrices is empty (regular price = 0.0).
+    available = len(fulfillment_summaries) > 0
 
     snapshot = PriceSnapshot(
         regular=regular_price,
@@ -165,6 +173,7 @@ def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None
         offer_start=offer_start,
         offer_end=offer_end,
         fulfillment_price_string=fulfillment_price_string,
+        available=available,
     )
 
     return Product(
