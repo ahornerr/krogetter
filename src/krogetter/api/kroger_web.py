@@ -189,13 +189,13 @@ def select_store(
     modality: str = "PICKUP",
     store_id: str | None = None,
 ) -> dict[str, str] | None:
-    """Select a store via the Kroger modality API.
+    """Search for stores by ZIP and build LAF headers for the product API.
 
-    Must be called after loading at least one page (to get Akamai cookies)
-    and after warming up the session on the homepage.
+    Calls POST /atlas/v1/modality/options to find stores, then builds the
+    x-laf-object header from the response. The PUT to /modality/preferences
+    is not needed — the product v2 API only requires the x-laf-object header.
 
-    Uses page.evaluate(fetch(...)) so the requests run inside the browser's
-    JS context with the correct Akamai cookies and TLS fingerprint.
+    Must be called after warming up the Akamai session on the homepage.
 
     Args:
         page: A Playwright page with an active Akamai session.
@@ -205,7 +205,7 @@ def select_store(
                   nearest store. Ignored for DELIVERY (server assigns FC).
 
     Returns:
-        Dict of LAF headers for the product API, or None on failure.
+        Dict with x-laf-object header, or None on failure.
     """
     # Step 1: Search for stores by ZIP
     stores_result = _safe_evaluate(
@@ -286,81 +286,33 @@ def select_store(
         modality,
     )
 
-    # Step 3: PUT to set the modality preference
-    put_body = {
-        "capabilities": {
-            "DELIVERY": True,
-            "IN_STORE": True,
-            "PICKUP": True,
-            "SHIP": True,
-        },
-        "storeDetails": [selected_store],
-        "hasIncompleteModalities": False,
-        "modifiedLAFSources": False,
-        "lafObject": [
-            {
-                "modality": {
-                    "type": modality,
-                    "handoffLocation": {
-                        "storeId": selected_store.get("locationId", ""),
-                        "facilityId": selected_store.get("storeNumber", ""),
-                    },
-                    "handoffAddress": {
-                        "address": selected_store.get("address", {}).get("address", {}),
-                        "location": selected_store.get("location", {}),
-                    },
-                },
-                "sources": [
-                    {
-                        "storeId": selected_store.get("locationId", ""),
-                        "facilityId": selected_store.get("storeNumber", ""),
-                    }
-                ],
-                "listingKeys": [selected_store.get("locationId", "")],
-            }
-        ],
-        "modalities": [modality_obj],
-        "primaryModality": {modality: modality_obj.get("id")},
-        "activeModality": modality,
-    }
-
-    put_result = _safe_evaluate(
-        page,
-        """async (body) => {
-        const resp = await fetch('/atlas/v1/modality/preferences?filter.restrictLafToFc=false', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/plain, */*',
-                'X-Kroger-Channel': 'WEB',
-            },
-            body: JSON.stringify(body),
-        });
-        return {status: resp.status, body: await resp.text()};
-    }""",
-        put_body,
-    )
-
-    if put_result["status"] != 200:
-        logger.warning(
-            "Store selection PUT failed: HTTP %s — %s",
-            put_result["status"],
-            put_result["body"][:200],
-        )
-        return None
-
-    logger.info("Store selection successful")
-
-    # Build LAF headers for subsequent product API calls.
-    # The product v2 API requires these headers to return store-specific pricing.
+    # Build LAF headers for the product v2 API.
+    # Only x-laf-object is required — the PUT to /modality/preferences is
+    # unnecessary since we pass the LAF object directly in the header.
     location_id = selected_store.get("locationId", "")
-    laf_headers: dict[str, str] = {
-        "x-laf-object": json.dumps(put_body["lafObject"]),
-        "x-modality": json.dumps({"type": modality, "locationId": location_id}),
-        "x-modality-type": modality,
-        "x-facility-id": location_id,
-    }
-    return laf_headers
+    laf_object = [
+        {
+            "modality": {
+                "type": modality,
+                "handoffLocation": {
+                    "storeId": location_id,
+                    "facilityId": selected_store.get("storeNumber", ""),
+                },
+                "handoffAddress": {
+                    "address": selected_store.get("address", {}).get("address", {}),
+                    "location": selected_store.get("location", {}),
+                },
+            },
+            "sources": [
+                {
+                    "storeId": location_id,
+                    "facilityId": selected_store.get("storeNumber", ""),
+                }
+            ],
+            "listingKeys": [location_id],
+        }
+    ]
+    return {"x-laf-object": json.dumps(laf_object)}
 
 
 def _fetch_product_data_api(
