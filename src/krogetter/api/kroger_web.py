@@ -365,7 +365,7 @@ def fetch_product(
     Returns:
         Product with price and offer data, or None on failure.
     """
-    from camoufox.sync_api import Camoufox
+    from invisible_playwright import InvisiblePlaywright
 
     # Determine the URL to navigate to
     if url_or_upc.startswith(("http://", "https://")):
@@ -393,10 +393,10 @@ def fetch_product(
 
     try:
         if own_browser:
-            _cm = Camoufox(headless=True)
+            _cm = InvisiblePlaywright(headless=True)
             browser = _cm.__enter__()
 
-        context = browser.new_context(no_viewport=True)
+        context = browser.new_context()
         page = context.new_page()
         try:
             # If a ZIP code is provided, we need to:

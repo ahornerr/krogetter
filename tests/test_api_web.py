@@ -1,4 +1,4 @@
-"""Tests for the Camoufox-based kroger_web module."""
+"""Tests for the invisible_playwright-based kroger_web module."""
 
 import json
 import pathlib
@@ -180,7 +180,7 @@ class TestFetchProduct:
         fixture = load_fixture()
         url = "https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack/0004900004825"
 
-        with patch("camoufox.sync_api.Camoufox") as mock_camoufox_cls:
+        with patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls:
             mock_browser = MagicMock()
             mock_context = MagicMock()
             mock_page = MagicMock()
@@ -188,10 +188,10 @@ class TestFetchProduct:
             mock_browser.new_context.return_value = mock_context
             mock_context.new_page.return_value = mock_page
 
-            # Camoufox() returns a context manager; __enter__ returns the browser
+            # InvisiblePlaywright() returns a context manager; __enter__ returns the browser
             mock_cm = MagicMock()
             mock_cm.__enter__.return_value = mock_browser
-            mock_camoufox_cls.return_value = mock_cm
+            mock_ip_cls.return_value = mock_cm
 
             mock_page.evaluate.return_value = json.dumps(fixture)
 
@@ -207,8 +207,8 @@ class TestFetchProduct:
         mock_page.goto.assert_called_once_with(
             url, wait_until="domcontentloaded", timeout=30000
         )
-        # Camoufox was instantiated
-        mock_camoufox_cls.assert_called_once_with(headless=True)
+        # InvisiblePlaywright was instantiated
+        mock_ip_cls.assert_called_once_with(headless=True)
         # Context manager was entered and exited
         mock_cm.__enter__.assert_called_once()
         mock_cm.__exit__.assert_called_once()
@@ -239,14 +239,14 @@ class TestFetchProduct:
         """When the page has no __INITIAL_STATE__, returns None."""
         url = "https://www.kingsoopers.com/p/missing/0004900004825"
 
-        with patch("camoufox.sync_api.Camoufox") as mock_camoufox_cls:
+        with patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls:
             mock_browser = MagicMock()
             mock_context = MagicMock()
             mock_page = MagicMock()
 
             mock_browser.new_context.return_value = mock_context
             mock_context.new_page.return_value = mock_page
-            mock_camoufox_cls.return_value = mock_browser
+            mock_ip_cls.return_value = mock_browser
 
             mock_page.evaluate.return_value = None
 
@@ -258,14 +258,14 @@ class TestFetchProduct:
         """Graceful failure when page navigation raises an exception."""
         url = "https://www.kingsoopers.com/p/error/0004900004825"
 
-        with patch("camoufox.sync_api.Camoufox") as mock_camoufox_cls:
+        with patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls:
             mock_browser = MagicMock()
             mock_context = MagicMock()
             mock_page = MagicMock()
 
             mock_browser.new_context.return_value = mock_context
             mock_context.new_page.return_value = mock_page
-            mock_camoufox_cls.return_value = mock_browser
+            mock_ip_cls.return_value = mock_browser
 
             mock_page.goto.side_effect = RuntimeError("Connection timeout")
 

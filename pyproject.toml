@@ -2,13 +2,17 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [project]
 name = "krogetter"
 version = "0.1.0"
 description = "Track sale prices on Kroger family store websites."
 requires-python = ">=3.11"
 dependencies = [
-    "camoufox>=0.4.11",
+    "invisible-playwright @ git+https://github.com/feder-cr/invisible_playwright.git",
+    "playwright>=1.40,<1.61",
     "click>=8.1",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
