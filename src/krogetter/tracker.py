@@ -190,9 +190,22 @@ class Tracker:
                     except Exception:
                         pass
 
-            if product is None:
-                logger.info("Could not fetch product for %s (%s)", item.upc, item.label)
-                return []
+        if product is None:
+            logger.info("Could not fetch product for %s (%s)", item.upc, item.label)
+            return []
+
+        # Update the item label from the product description if it was
+        # auto-derived (matches the slug-based label or is the bare UPC)
+        from krogetter.url import slug_to_label
+        auto_labels = {slug_to_label(item.url), item.upc}
+        if item.label in auto_labels and product.description:
+            new_label = product.description
+            if product.brand:
+                new_label = f"{product.brand} {product.description}"
+            if new_label != item.label:
+                item.label = new_label
+                self._storage.update_item_label(item.upc, new_label)
+                logger.info("Updated label for %s: %s", item.upc, new_label)
 
         if product.price is None:
             logger.info("Product %s (%s) has no price data", item.upc, item.label)

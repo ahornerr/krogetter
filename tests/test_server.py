@@ -18,12 +18,15 @@ def data_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(data_dir: Path) -> TestClient:
+def client(data_dir: Path):
     """Create a TestClient with a fresh app backed by a temp dir."""
-    # Don't start the background polling thread for tests
-    with patch("krogetter.server.app._start_polling_thread", return_value=None):
+    with (
+        patch("krogetter.server.app._start_polling_thread", return_value=None),
+        patch("krogetter.tracker.Tracker.check_item", return_value=[]),
+        patch("krogetter.tracker.Tracker.check_once", return_value=[]),
+    ):
         app = create_app(data_dir=data_dir, poll_interval=99999)
-    return TestClient(app)
+        yield TestClient(app)
 
 
 class TestHealth:

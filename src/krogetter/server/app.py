@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -26,6 +27,8 @@ from krogetter.server.schemas import (
 from krogetter.storage import Storage
 from krogetter.tracker import Tracker, _snapshot_from_history
 from krogetter.url import extract_upc_or_passthrough, slug_to_label
+
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
 #  Helper functions
@@ -184,6 +187,20 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
             storage.add_item(item)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        # Immediately check the price so the item has data before the next poll.
+        # This also updates the label from the product API response.
+        try:
+            with lock:
+                tracker.check_item(item)
+        except Exception:
+            logger.warning("Immediate check failed for %s", upc, exc_info=True)
+
+        # Reload the item in case the label was updated from the product API
+        items = storage.load_items()
+        updated = [i for i in items if i.upc == upc]
+        if updated:
+            item = updated[0]
 
         return jsonable_encoder(_item_to_response(item))
 

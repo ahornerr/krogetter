@@ -99,6 +99,12 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
             except Exception:
                 errors["base"] = "add_failed"
             else:
+                # Immediately check the price so the item has data
+                try:
+                    upc = user_input["url"].rstrip("/").split("/")[-1]
+                    await api.check_item(upc)
+                except Exception:
+                    pass  # Non-fatal — the next poll will fetch it
                 coordinator = self._get_coordinator()
                 await coordinator.async_request_refresh()
                 return self.async_create_entry(title="", data=dict(self.config_entry.options))

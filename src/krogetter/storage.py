@@ -116,6 +116,16 @@ class Storage:
         self.save_items(new_items)
         return True
 
+    def update_item_label(self, upc: str, label: str) -> bool:
+        """Update the label of a tracked item. Returns True if updated."""
+        items = self.load_items()
+        for item in items:
+            if item.upc == upc:
+                item.label = label
+                self.save_items(items)
+                return True
+        return False
+
     # ------------------------------------------------------------------ #
     #  Price history (history.jsonl — append-only)
     # ------------------------------------------------------------------ #
