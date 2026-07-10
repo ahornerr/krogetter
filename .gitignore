@@ -67,8 +67,8 @@ tracked_items.json.bak
 # Deepwork session state (keep readable by tooling, out of git)
 .slim/deepwork/
 
-# Camoufox binary cache
-.camoufox/
+# invisible_playwright binary cache
+.invisible-playwright/
 
 # HAR files / APK analysis artifacts
 *.har

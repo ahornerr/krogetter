@@ -1,6 +1,6 @@
-"""Camoufox-based product fetcher using __INITIAL_STATE__ extraction.
+"""Stealth Firefox product fetcher using __INITIAL_STATE__ extraction.
 
-This is the primary data source — fetches the product page HTML via Camoufox
+This is the primary data source — fetches the product page HTML via invisible_playwright
 (stealth Firefox), extracts the embedded __INITIAL_STATE__ JSON, and parses
 product/price/offer data. No API keys required.
 """
@@ -351,11 +351,11 @@ def fetch_product(
     modality: str = "PICKUP",
     store_id: str | None = None,
 ) -> Product | None:
-    """Fetch a product by URL or UPC using Camoufox.
+    """Fetch a product by URL or UPC using stealth Firefox.
 
     Args:
         url_or_upc: A Kroger product URL or bare UPC.
-        browser: An existing Camoufox browser instance (for reuse in polling loops).
+        browser: An existing browser instance (for reuse in polling loops).
                  If None, a new browser is launched and closed.
         zip_code: If provided, selects a store via the Kroger modality API before
                   fetching the product. Requires warming up the Akamai session.
@@ -365,7 +365,7 @@ def fetch_product(
     Returns:
         Product with price and offer data, or None on failure.
     """
-    from camoufox.sync_api import Camoufox
+    from invisible_playwright import InvisiblePlaywright
 
     # Determine the URL to navigate to
     if url_or_upc.startswith(("http://", "https://")):
@@ -393,10 +393,10 @@ def fetch_product(
 
     try:
         if own_browser:
-            _cm = Camoufox(headless=True)
+            _cm = InvisiblePlaywright(headless=True)
             browser = _cm.__enter__()
 
-        context = browser.new_context(no_viewport=True)
+        context = browser.new_context()
         page = context.new_page()
         try:
             # If a ZIP code is provided, we need to:

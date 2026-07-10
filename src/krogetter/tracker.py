@@ -31,7 +31,7 @@ def _snapshot_from_history(entry: dict) -> PriceSnapshot | None:
 
 
 class Tracker:
-    """Polls tracked items for price changes using the Camoufox web fetcher.
+    """Polls tracked items for price changes using the stealth Firefox web fetcher.
 
     Launches a shared browser instance per polling cycle for efficiency.
     Never crashes on a single item failure — logs the error and continues.
@@ -39,14 +39,14 @@ class Tracker:
 
     def __init__(self, storage: Storage) -> None:
         self._storage = storage
-        self._browser: Any = None  # Shared Camoufox browser, lazily initialized
-        self._browser_cm: Any = None  # Camoufox context manager handle
+        self._browser: Any = None  # Shared browser, lazily initialized
+        self._browser_cm: Any = None  # Browser context manager handle
 
     def _get_browser(self) -> Any:
-        """Lazily initialize a shared Camoufox browser instance."""
+        """Lazily initialize a shared browser instance."""
         if self._browser is None:
-            from camoufox.sync_api import Camoufox
-            self._browser_cm = Camoufox(headless=True)
+            from invisible_playwright import InvisiblePlaywright
+            self._browser_cm = InvisiblePlaywright(headless=True)
             self._browser = self._browser_cm.__enter__()
         return self._browser
 
