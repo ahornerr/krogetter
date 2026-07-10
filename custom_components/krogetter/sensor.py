@@ -85,8 +85,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # Initial population
     _sync_entities()
 
+    # Single integration-level sensor for last refresh time
+    async_add_entities([KrogetterLastRefreshSensor(coordinator, entry.entry_id)])
+
     # Listen for coordinator updates — creates/removes entities dynamically
     entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
+
+
+class KrogetterLastRefreshSensor(CoordinatorEntity, SensorEntity):
+    """Sensor showing when the coordinator last refreshed data."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"krogetter_{entry_id}_last_refresh"
+        self._attr_name = "Krogetter Last Refresh"
+
+    @property
+    def native_value(self):
+        return self.coordinator.last_update_success_time
 
 class KrogetterSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, description, item: dict) -> None:
