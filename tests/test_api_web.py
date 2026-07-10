@@ -249,8 +249,8 @@ class TestFetchProduct:
 # ---------------------------------------------------------------------------
 
 class TestPrepareSession:
-    def test_returns_client_and_laf_headers(self) -> None:
-        """prepare_session warms up Akamai and returns an httpx client."""
+    def test_returns_client_and_default_laf_headers(self) -> None:
+        """prepare_session warms up Akamai and returns an httpx client with default LAF headers."""
         mock_browser = MagicMock()
         mock_context = MagicMock()
         mock_page = MagicMock()
@@ -260,12 +260,16 @@ class TestPrepareSession:
         mock_context.cookies.return_value = []
         mock_page.evaluate.return_value = "Mozilla/5.0 test"
 
-        client, laf_headers = prepare_session(
-            mock_browser, "https://www.kingsoopers.com/"
-        )
+        with patch(
+            "krogetter.api.kroger_web._get_default_store_laf",
+            return_value={"x-laf-object": "[]"},
+        ):
+            client, laf_headers = prepare_session(
+                mock_browser, "https://www.kingsoopers.com/"
+            )
 
         assert isinstance(client, httpx.Client)
-        assert laf_headers is None  # no zip_code → no store selection
+        assert laf_headers is not None  # default store LAF headers
 
         # Homepage loaded (no robots.txt anymore)
         mock_page.goto.assert_called_once_with(
