@@ -56,15 +56,11 @@ class KrogetterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> "KrogetterOptionsFlowHandler":
         """Get the options flow handler."""
-        return KrogetterOptionsFlowHandler(config_entry)
+        return KrogetterOptionsFlowHandler()
 
 
 class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
     """Options flow with a menu to add items, remove items, and configure settings."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        super().__init__(config_entry)
 
     def _get_api(self) -> KrogetterAPI:
         """Get the API client from hass data."""
@@ -105,7 +101,7 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
             else:
                 coordinator = self._get_coordinator()
                 await coordinator.async_request_refresh()
-                return self.async_create_entry(title="", data={})
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
         schema = vol.Schema({
             vol.Required("url"): TextSelector(
@@ -141,7 +137,7 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
             else:
                 coordinator = self._get_coordinator()
                 await coordinator.async_request_refresh()
-                return self.async_create_entry(title="", data={})
+                return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
         # Build selector from current items
         api = self._get_api()

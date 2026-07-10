@@ -2,7 +2,7 @@
 from __future__ import annotations
 import logging
 from dataclasses import dataclass
-from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -21,16 +21,16 @@ SENSORS = [
         key="price",
         name="Price",
         native_unit_of_measurement="$",
-        device_class="monetary",
-        state_class="measurement",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:currency-usd",
     ),
     KrogetterSensorDescription(
         key="effective_unit_price",
         name="Effective Unit Price",
         native_unit_of_measurement="$",
-        device_class="monetary",
-        state_class="measurement",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:tag-multiple",
     ),
     KrogetterSensorDescription(
@@ -42,15 +42,15 @@ SENSORS = [
         key="savings",
         name="Savings",
         native_unit_of_measurement="$",
-        device_class="monetary",
-        state_class="measurement",
+        device_class=SensorDeviceClass.MONETARY,
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:piggy-bank",
     ),
     KrogetterSensorDescription(
         key="savings_percent",
         name="Savings Percent",
         native_unit_of_measurement="%",
-        state_class="measurement",
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:percent",
     ),
 ]
@@ -96,11 +96,11 @@ class KrogetterSensor(CoordinatorEntity, SensorEntity):
         latest = item["latest"]
         key = self.entity_description.key
         if key == "price":
-            return latest["regular"]
+            return latest.get("regular")
         elif key == "effective_unit_price":
             return latest.get("effective_unit_price")
         elif key == "offer":
-            return latest.get("synthetic_description") or "None"
+            return latest.get("synthetic_description")
         elif key == "savings":
             return latest.get("savings")
         elif key == "savings_percent":
