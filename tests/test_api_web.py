@@ -6,9 +6,10 @@ from unittest.mock import MagicMock, Mock, patch
 
 from krogetter.api.kroger_web import (
     _extract_initial_state,
+    _fetch_product_data_api,
     _get_product_data,
     _parse_price,
-    _parse_product_from_state,
+    _parse_product_data,
     fetch_product,
 )
 
@@ -105,13 +106,14 @@ class TestGetProductData:
 
 
 # ---------------------------------------------------------------------------
-# _parse_product_from_state
+# _parse_product_data
 # ---------------------------------------------------------------------------
 
-class TestParseProductFromState:
+class TestParseProductData:
     def test_parses_product_from_fixture(self) -> None:
         state = load_fixture()
-        product = _parse_product_from_state(state, "0004900004825")
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.upc == "0004900004825"
         assert product.product_id == "0004900004825"
@@ -123,14 +125,16 @@ class TestParseProductFromState:
 
     def test_parses_price_correctly(self) -> None:
         state = load_fixture()
-        product = _parse_product_from_state(state, "0004900004825")
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.regular == 11.99
 
     def test_parses_offers_correctly(self) -> None:
         state = load_fixture()
-        product = _parse_product_from_state(state, "0004900004825")
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.promo_description == "Buy 2 Get 1 Free"
@@ -140,14 +144,16 @@ class TestParseProductFromState:
 
     def test_parses_fulfillment_price_string(self) -> None:
         state = load_fixture()
-        product = _parse_product_from_state(state, "0004900004825")
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.fulfillment_price_string == "Buy 2 Get 1 Free"
 
     def test_has_offer_is_true_when_offer_exists(self) -> None:
         state = load_fixture()
-        product = _parse_product_from_state(state, "0004900004825")
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.has_offer is True
@@ -158,16 +164,17 @@ class TestParseProductFromState:
 
     def test_synthetic_description_prefers_fulfillment_price_string(self) -> None:
         state = load_fixture()
-        product = _parse_product_from_state(state, "0004900004825")
+        product_data = _get_product_data(state, "0004900004825")
+        product = _parse_product_data(product_data, "0004900004825")
         assert product is not None
         assert product.price is not None
         assert product.price.synthetic_description == "Buy 2 Get 1 Free"
 
-    def test_returns_none_for_empty_state(self) -> None:
-        assert _parse_product_from_state({}, "0004900004825") is None
+    def test_returns_none_for_empty_data(self) -> None:
+        assert _parse_product_data({}, "0004900004825") is None
 
-    def test_returns_none_for_state_without_product_data(self) -> None:
-        assert _parse_product_from_state({"calypso": {}}, "0004900004825") is None
+    def test_returns_none_for_none(self) -> None:
+        assert _parse_product_data(None, "0004900004825") is None  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +183,9 @@ class TestParseProductFromState:
 
 class TestFetchProduct:
     def test_with_url_extracts_and_parses(self) -> None:
-        """fetch_product navigates, extracts, and parses a product."""
+        """fetch_product navigates, calls product API, and parses the result."""
         fixture = load_fixture()
+        product_data = _get_product_data(fixture, "0004900004825")
         url = "https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack/0004900004825"
 
         with patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls:
@@ -188,12 +196,16 @@ class TestFetchProduct:
             mock_browser.new_context.return_value = mock_context
             mock_context.new_page.return_value = mock_page
 
-            # InvisiblePlaywright() returns a context manager; __enter__ returns the browser
             mock_cm = MagicMock()
             mock_cm.__enter__.return_value = mock_browser
             mock_ip_cls.return_value = mock_cm
 
-            mock_page.evaluate.return_value = json.dumps(fixture)
+            # page.evaluate is called by _safe_evaluate for the product API.
+            # It returns {status, body} from the fetch() call.
+            mock_page.evaluate.return_value = {
+                "status": 200,
+                "body": json.dumps({"data": {"products": [product_data]}}),
+            }
 
             result = fetch_product(url)
 
@@ -203,8 +215,8 @@ class TestFetchProduct:
         assert result.price.regular == 11.99
         assert result.price.promo_description == "Buy 2 Get 1 Free"
 
-        # Verify navigation calls: homepage warmup + product page
-        assert mock_page.goto.call_count == 2
+        # Verify navigation calls: homepage warmup + product page + robots.txt
+        assert mock_page.goto.call_count == 3
         mock_page.goto.assert_any_call(
             "https://www.kingsoopers.com/",
             wait_until="domcontentloaded",
@@ -212,6 +224,11 @@ class TestFetchProduct:
         )
         mock_page.goto.assert_any_call(
             url, wait_until="domcontentloaded", timeout=30000
+        )
+        mock_page.goto.assert_any_call(
+            "https://www.kingsoopers.com/robots.txt",
+            wait_until="domcontentloaded",
+            timeout=30000,
         )
         # InvisiblePlaywright was instantiated
         mock_ip_cls.assert_called_once_with(headless=True)
@@ -222,6 +239,7 @@ class TestFetchProduct:
     def test_with_provided_browser_does_not_close(self) -> None:
         """When a browser is provided, it is NOT closed by fetch_product."""
         fixture = load_fixture()
+        product_data = _get_product_data(fixture, "0004900004825")
         url = "https://www.kingsoopers.com/p/test-product/0004900004825"
 
         mock_browser = MagicMock()
@@ -231,7 +249,10 @@ class TestFetchProduct:
         mock_browser.new_context.return_value = mock_context
         mock_context.new_page.return_value = mock_page
 
-        mock_page.evaluate.return_value = json.dumps(fixture)
+        mock_page.evaluate.return_value = {
+            "status": 200,
+            "body": json.dumps({"data": {"products": [product_data]}}),
+        }
 
         result = fetch_product(url, browser=mock_browser)
 
@@ -241,8 +262,8 @@ class TestFetchProduct:
         # The provided browser MUST NOT have been closed
         mock_browser.close.assert_not_called()
 
-    def test_returns_none_when_no_initial_state(self) -> None:
-        """When the page has no __INITIAL_STATE__, returns None."""
+    def test_returns_none_when_api_returns_no_products(self) -> None:
+        """When the product API returns no products, returns None."""
         url = "https://www.kingsoopers.com/p/missing/0004900004825"
 
         with patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls:
@@ -254,7 +275,10 @@ class TestFetchProduct:
             mock_context.new_page.return_value = mock_page
             mock_ip_cls.return_value = mock_browser
 
-            mock_page.evaluate.return_value = None
+            mock_page.evaluate.return_value = {
+                "status": 200,
+                "body": '{"data": {"products": []}}',
+            }
 
             result = fetch_product(url)
 

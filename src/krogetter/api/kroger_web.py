@@ -27,22 +27,48 @@ def _extract_initial_state(page: Any) -> dict[str, Any] | None:
     deferred assignment.
     """
     result = page.evaluate('''() => {
+        // First check if __INITIAL_STATE__ is already on window
+        // (may be set by an earlier script that already executed)
+        if (typeof window.__INITIAL_STATE__ !== 'undefined') {
+            try {
+                return JSON.stringify(window.__INITIAL_STATE__);
+            } catch(e) {}
+        }
+
+        // Try each script that mentions __INITIAL_STATE__
         const scripts = document.querySelectorAll('script');
+        let matchCount = 0;
         for (const s of scripts) {
             if (s.textContent && s.textContent.includes('__INITIAL_STATE__')) {
+                matchCount++;
                 try {
                     eval(s.textContent);
                     if (typeof window.__INITIAL_STATE__ !== 'undefined') {
                         return JSON.stringify(window.__INITIAL_STATE__);
                     }
-                } catch(e) { return null; }
+                } catch(e) {
+                    // This script failed; try the next one
+                }
             }
         }
-        return null;
+        return JSON.stringify({__error: 'no script successfully set __INITIAL_STATE__', scriptMatches: matchCount, totalScripts: scripts.length});
     }''')
-    if result:
-        return json.loads(result)
-    return None
+    if not result:
+        logger.debug("_extract_initial_state: page.evaluate returned empty/null")
+        return None
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError as exc:
+        logger.debug("_extract_initial_state: failed to parse result as JSON: %s", exc)
+        return None
+    if isinstance(parsed, dict) and "__error" in parsed:
+        logger.debug("_extract_initial_state: %s", parsed["__error"])
+        return None
+    logger.debug(
+        "_extract_initial_state: success, top-level keys: %s",
+        list(parsed.keys()) if isinstance(parsed, dict) else type(parsed).__name__,
+    )
+    return parsed
 
 
 def _parse_price(price_str: str) -> float:
@@ -57,21 +83,30 @@ def _get_product_data(state: dict[str, Any], upc: str) -> dict[str, Any] | None:
     Tries calypso.domains.products.{upc}.data first, then falls back to
     calypso.useCases.getProducts.pdpSSR.response.data.products[0].
     """
+    calypso: dict[str, Any] = state.get("calypso", {})
+    if not calypso:
+        logger.debug(
+            "State has no 'calypso' key; top-level keys: %s",
+            list(state.keys()),
+        )
+        return None
+
     # Primary path: calypso.domains.products.{upc}.data
-    product_data: dict[str, Any] | None = (
-        state.get("calypso", {})
-        .get("domains", {})
-        .get("products", {})
-        .get(upc, {})
-        .get("data", {})
-    )
+    products_domain: dict[str, Any] = calypso.get("domains", {}).get("products", {})
+    if products_domain:
+        available_upcs = list(products_domain.keys())
+        logger.debug(
+            "calypso.domains.products has UPCs: %s (looking for %s)",
+            available_upcs,
+            upc,
+        )
+    product_data: dict[str, Any] = products_domain.get(upc, {}).get("data", {})
     if product_data:
         return product_data
 
     # Fallback: calypso.useCases.getProducts.pdpSSR.response.data.products[0]
     products: list[dict[str, Any]] = (
-        state.get("calypso", {})
-        .get("useCases", {})
+        calypso.get("useCases", {})
         .get("getProducts", {})
         .get("pdpSSR", {})
         .get("response", {})
@@ -79,14 +114,25 @@ def _get_product_data(state: dict[str, Any], upc: str) -> dict[str, Any] | None:
         .get("products", [])
     )
     if products:
+        logger.debug(
+            "Primary product path miss; using pdpSSR fallback (%d products)",
+            len(products),
+        )
         return products[0]
 
+    # Log what we actually see for debugging
+    logger.debug(
+        "Product not found in state. calypso keys: %s, "
+        "calypso.domains keys: %s, calypso.useCases keys: %s",
+        list(calypso.keys()),
+        list(calypso.get("domains", {}).keys()),
+        list(calypso.get("useCases", {}).keys()),
+    )
     return None
 
 
-def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None:
-    """Parse a Product from the __INITIAL_STATE__ JSON."""
-    product_data = _get_product_data(state, upc)
+def _parse_product_data(product_data: dict[str, Any] | None, upc: str) -> Product | None:
+    """Parse a Product from a product data dict (from API or __INITIAL_STATE__)."""
     if not product_data:
         return None
 
@@ -221,7 +267,7 @@ def select_store(
     zip_code: str,
     modality: str = "PICKUP",
     store_id: str | None = None,
-) -> bool:
+) -> dict[str, str] | None:
     """Select a store via the Kroger modality API.
 
     Must be called after loading at least one page (to get Akamai cookies)
@@ -238,7 +284,7 @@ def select_store(
                   nearest store. Ignored for DELIVERY (server assigns FC).
 
     Returns:
-        True if the store was successfully selected, False otherwise.
+        Dict of LAF headers for the product API, or None on failure.
     """
     # Step 1: Search for stores by ZIP
     stores_result = _safe_evaluate(
@@ -264,7 +310,7 @@ def select_store(
             zip_code,
             stores_result["status"],
         )
-        return False
+        return None
 
     mo_data = (
         json.loads(stores_result["body"])
@@ -274,21 +320,21 @@ def select_store(
     stores = mo_data.get("storeDetails", [])
     if not stores:
         logger.warning("No stores found for ZIP %s", zip_code)
-        return False
+        return None
 
     # Step 2: Pick the modality object
     if modality == "DELIVERY":
         modality_obj = mo_data.get("DELIVERY", {})
         if not modality_obj:
             logger.warning("No DELIVERY modality available for ZIP %s", zip_code)
-            return False
+            return None
         # For delivery, use the first store for display purposes
         selected_store = stores[0]
     else:  # PICKUP
         pickup_mods = mo_data.get("PICKUP", [])
         if not pickup_mods:
             logger.warning("No PICKUP modality available for ZIP %s", zip_code)
-            return False
+            return None
         if store_id:
             # Find the matching store
             modality_obj = next(
@@ -380,10 +426,84 @@ def select_store(
             put_result["status"],
             put_result["body"][:200],
         )
-        return False
+        return None
 
     logger.info("Store selection successful")
-    return True
+
+    # Build LAF headers for subsequent product API calls.
+    # The product v2 API requires these headers to return store-specific pricing.
+    location_id = selected_store.get("locationId", "")
+    laf_headers: dict[str, str] = {
+        "x-laf-object": json.dumps(put_body["lafObject"]),
+        "x-modality": json.dumps({"type": modality, "locationId": location_id}),
+        "x-modality-type": modality,
+        "x-facility-id": location_id,
+    }
+    return laf_headers
+
+
+def _fetch_product_data_api(
+    page: Any, upc: str, laf_headers: dict[str, str] | None = None
+) -> dict[str, Any] | None:
+    """Fetch product data via the Kroger product v2 API from the browser context.
+
+    The website moved from SSR (product data in __INITIAL_STATE__) to
+    client-side fetching. The SPA calls this API after page load to get
+    product/price/offer data. We call it directly from the browser context
+    (with Akamai cookies) instead of relying on __INITIAL_STATE__.
+
+    Args:
+        page: A Playwright page with an active Akamai session.
+        upc: The 13-digit GTIN/UPC to look up.
+        laf_headers: Optional LAF headers from select_store() for store-specific
+                     pricing. If None, the API may return IP-geolocated pricing.
+
+    Returns the product dict (data.products[0]) or None on failure.
+    """
+    # Build headers — LAF headers are required for store-specific pricing
+    headers_js = "{'Accept': 'application/json, text/plain, */*', 'X-Kroger-Channel': 'WEB'"
+    if laf_headers:
+        for k, v in laf_headers.items():
+            # Escape single quotes in JSON values for JS string
+            escaped = v.replace("'", "\\'")
+            headers_js += f", '{k}': '{escaped}'"
+    headers_js += "}"
+
+    result = _safe_evaluate(
+        page,
+        f"""async (upc) => {{
+        const resp = await fetch(
+            '/atlas/v1/product/v2/products?filter.gtin13s=' + upc
+            + '&filter.verified=true'
+            + '&projections=items.full,offers.compact,nutrition.label,'
+            + 'inventory.projected,variantGroupings.compact',
+            {{
+                headers: {headers_js},
+            }}
+        );
+        return {{status: resp.status, body: await resp.text()}};
+    }}""",
+        upc,
+    )
+
+    if result["status"] != 200:
+        logger.warning(
+            "Product API returned HTTP %s for UPC %s", result["status"], upc
+        )
+        return None
+
+    try:
+        data = json.loads(result["body"])
+    except json.JSONDecodeError as exc:
+        logger.warning("Product API response not valid JSON: %s", exc)
+        return None
+
+    products: list[dict[str, Any]] = data.get("data", {}).get("products", [])
+    if not products:
+        logger.warning("Product API returned no products for UPC %s", upc)
+        return None
+
+    return products[0]
 
 
 def fetch_product(
@@ -452,35 +572,28 @@ def fetch_product(
             page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_timeout(3000)
 
-            # Now load the product page with an established Akamai session
+            # Load the product page to establish the Akamai session for
+            # this specific URL path. The SPA will make client-side API
+            # calls, but we don't need to capture those — we'll call the
+            # product API ourselves after store selection.
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_function(
-                "Array.from(document.querySelectorAll('script')).some(s => s.textContent && s.textContent.includes('__INITIAL_STATE__'))",
-                timeout=20000,
-            )
             page.wait_for_timeout(1000)
 
-            state = _extract_initial_state(page)
-            if state is None:
-                logger.warning("No __INITIAL_STATE__ found for %r", url)
-                return None
+            # Navigate to a static page on the same origin to kill the SPA
+            # and stabilize the execution context for API calls.
+            # The SPA's client-side router destroys JS execution contexts
+            # mid-evaluate; robots.txt has no SPA so the context is stable.
+            static_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+            page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(500)
 
-            # If a ZIP code is provided, try to select a store and reload
-            # to get store-specific pricing. If this fails, we fall back to
-            # the IP-geolocated pricing from the first load.
+            # If a ZIP code is provided, select a store before fetching
+            # product data. This sets cookies that determine which store's
+            # pricing the product API returns.
+            laf_headers: dict[str, str] | None = None
             if zip_code:
-                # Navigate to a static page on the same origin to kill the SPA
-                # and stabilize the execution context for API calls.
-                # The SPA's client-side router destroys JS execution contexts
-                # mid-evaluate; robots.txt has no SPA so the context is stable.
-                from urllib.parse import urlparse
-                static_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}/robots.txt"
-                page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(500)
-
-                store_selected = False
                 try:
-                    store_selected = select_store(
+                    laf_headers = select_store(
                         page, zip_code, modality, store_id
                     )
                 except Exception:
@@ -489,36 +602,27 @@ def fetch_product(
                         exc_info=True,
                     )
 
-                if store_selected:
-                    # Reload product page with the selected store cookie
-                    try:
-                        page.goto(
-                            url,
-                            wait_until="domcontentloaded",
-                            timeout=60000,
-                        )
-                        page.wait_for_function(
-                            "Array.from(document.querySelectorAll('script')).some(s => s.textContent && s.textContent.includes('__INITIAL_STATE__'))",
-                            timeout=20000,
-                        )
-                        page.wait_for_timeout(1000)
-                        new_state = _extract_initial_state(page)
-                        if new_state is not None:
-                            state = new_state
-                    except Exception:
-                        logger.warning(
-                            "Product page reload failed after store selection; "
-                            "using default store pricing"
-                        )
-                else:
+                if not laf_headers:
                     logger.warning(
                         "Store selection failed; using default store pricing"
                     )
 
-            product = _parse_product_from_state(state, upc)
+            # Fetch product data via the product v2 API.
+            # The website moved from SSR to client-side fetching, so
+            # __INITIAL_STATE__ no longer contains product data. We call
+            # the same API the SPA would call, from the browser context
+            # (with Akamai cookies and store selection cookies).
+            product_data = _fetch_product_data_api(page, upc, laf_headers)
+            if product_data is None:
+                logger.warning(
+                    "Failed to fetch product data via API for %r", url
+                )
+                return None
+
+            product = _parse_product_data(product_data, upc)
             if product is None:
                 logger.warning(
-                    "Failed to parse product data from __INITIAL_STATE__ for %r", url
+                    "Failed to parse product data from API response for %r", url
                 )
             return product
         finally:
