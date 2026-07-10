@@ -432,9 +432,18 @@ def fetch_product(
         context = browser.new_context()
         page = context.new_page()
         try:
-            # Load the product page and extract state.
-            # This is the primary data — even if store selection fails later,
-            # we still have valid product/pricing data (IP-geolocated).
+            # Determine the domain for homepage warmup
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            homepage_url = f"{parsed.scheme}://{parsed.netloc}/"
+
+            # Warm up Akamai session on homepage first.
+            # Going directly to a product page gets "Access Denied" because
+            # Akamai needs to set cookies via the homepage challenge first.
+            page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+
+            # Now load the product page with an established Akamai session
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             page.wait_for_function(
                 "Array.from(document.querySelectorAll('script')).some(s => s.textContent && s.textContent.includes('__INITIAL_STATE__'))",
@@ -451,12 +460,14 @@ def fetch_product(
             # to get store-specific pricing. If this fails, we fall back to
             # the IP-geolocated pricing from the first load.
             if zip_code:
-                # Stop all SPA navigations/timers to stabilize the execution
-                # context before making API calls via page.evaluate(fetch())
-                try:
-                    page.evaluate("window.stop()")
-                except Exception:
-                    pass
+                # Navigate to a static page on the same origin to kill the SPA
+                # and stabilize the execution context for API calls.
+                # The SPA's client-side router destroys JS execution contexts
+                # mid-evaluate; robots.txt has no SPA so the context is stable.
+                from urllib.parse import urlparse
+                static_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}/robots.txt"
+                page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(500)
 
                 store_selected = False
                 try:

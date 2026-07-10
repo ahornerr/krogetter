@@ -203,8 +203,14 @@ class TestFetchProduct:
         assert result.price.regular == 11.99
         assert result.price.promo_description == "Buy 2 Get 1 Free"
 
-        # Verify navigation call
-        mock_page.goto.assert_called_once_with(
+        # Verify navigation calls: homepage warmup + product page
+        assert mock_page.goto.call_count == 2
+        mock_page.goto.assert_any_call(
+            "https://www.kingsoopers.com/",
+            wait_until="domcontentloaded",
+            timeout=30000,
+        )
+        mock_page.goto.assert_any_call(
             url, wait_until="domcontentloaded", timeout=30000
         )
         # InvisiblePlaywright was instantiated
