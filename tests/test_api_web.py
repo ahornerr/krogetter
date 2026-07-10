@@ -4,8 +4,6 @@ import json
 import pathlib
 from unittest.mock import MagicMock, Mock, patch
 
-import pytest
-
 from krogetter.api.kroger_web import (
     _extract_initial_state,
     _get_product_data,
@@ -13,7 +11,6 @@ from krogetter.api.kroger_web import (
     _parse_product_from_state,
     fetch_product,
 )
-from krogetter.models import PriceSnapshot
 
 FIXTURE_PATH = pathlib.Path(__file__).resolve().parent / "initial_state.json"
 

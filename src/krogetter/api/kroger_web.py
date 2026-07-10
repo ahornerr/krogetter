@@ -7,7 +7,7 @@ product/price/offer data. No API keys required.
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from krogetter.models import PriceSnapshot, Product
@@ -160,7 +160,7 @@ def _parse_product_from_state(state: dict[str, Any], upc: str) -> Product | None
         regular=regular_price,
         promo=promo_price,
         promo_description=promo_description,
-        checked_at=datetime.now(timezone.utc).isoformat(),
+        checked_at=datetime.now(UTC).isoformat(),
         offer_template=offer_template,
         offer_start=offer_start,
         offer_end=offer_end,

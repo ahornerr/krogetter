@@ -4,7 +4,6 @@ import dataclasses
 import json
 import logging
 import os
-from datetime import datetime, timezone
 from pathlib import Path
 
 from krogetter.models import PriceSnapshot, TrackedItem
@@ -159,7 +158,7 @@ class Storage:
 
         entries: list[dict] = []
         try:
-            with open(self._history_file, "r", encoding="utf-8") as fh:
+            with open(self._history_file, encoding="utf-8") as fh:
                 for line_num, line in enumerate(fh, start=1):
                     stripped = line.strip()
                     if not stripped:

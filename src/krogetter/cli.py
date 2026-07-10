@@ -1,7 +1,7 @@
 """Command-line interface for krogetter."""
 
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NoReturn
 
 import click
@@ -118,7 +118,7 @@ def add(
         location_id=store_id,
         zip_code=zip_code or "",
         modality=modality,
-        added_at=datetime.now(timezone.utc).isoformat(),
+        added_at=datetime.now(UTC).isoformat(),
     )
 
     # Add to storage
@@ -137,7 +137,7 @@ def add(
         else:
             click.echo(f"  Pickup near ZIP {zip_code} (nearest store)")
     else:
-        click.echo(f"  Store: auto-detected via IP geolocation")
+        click.echo("  Store: auto-detected via IP geolocation")
 
 
 @main.command(name="list")
@@ -337,3 +337,18 @@ def config_cmd(ctx: click.Context) -> None:
 # The command function is named config_cmd but registered as "config"
 # to avoid shadowing the config module variable.
 main.add_command(config_cmd, name="config")
+
+
+@main.command()
+@click.option("--host", default="0.0.0.0", help="Bind host")
+@click.option("--port", default=8585, type=int, help="Bind port")
+@click.pass_context
+def serve(ctx: click.Context, host: str, port: int) -> None:
+    """Start the HTTP API server."""
+    config = _get_config(ctx)
+    import uvicorn
+
+    from krogetter.server.app import create_app
+
+    app = create_app(config.data_dir, config.poll_interval)
+    uvicorn.run(app, host=host, port=port)

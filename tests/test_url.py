@@ -1,6 +1,7 @@
 """Tests for the URL parsing and UPC extraction module."""
 
 import pytest
+
 from krogetter.url import extract_upc_or_passthrough, parse_product_url, validate_upc
 
 # The actual product ID from the user's example URL.

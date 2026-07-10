@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Krogetter",
+        "description": "Enter the URL of your Krogetter API server.",
+        "data": {
+          "api_url": "API Server URL"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the API server. Check the URL and try again."
+    },
+    "abort": {
+      "already_configured": "This API server is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Krogetter Options",
+        "description": "Configure polling interval.",
+        "data": {
+          "poll_interval": "Poll Interval (seconds, minimum 60)"
+        }
+      }
+    }
+  }
+}

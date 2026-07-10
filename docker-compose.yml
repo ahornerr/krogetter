@@ -1,0 +1,22 @@
+# Example docker-compose for running Krogetter alongside Home Assistant
+#
+# Usage:
+#   1. Place this file next to your HA docker-compose.yml (or merge services)
+#   2. Ensure both containers are on the same Docker network
+#   3. In HA, add the Krogetter integration and enter the API URL:
+#      http://krogetter:8585  (if on same Docker network)
+#      http://host.docker.internal:8585  (if HA is in a container)
+
+services:
+  krogetter:
+    image: ghcr.io/ahornerr/krogetter:latest
+    container_name: krogetter
+    restart: unless-stopped
+    ports:
+      - "8585:8585"
+    volumes:
+      - ./krogetter-data:/data
+    environment:
+      KROGETTER_DATA_DIR: /data
+      KROGETTER_POLL_INTERVAL: "3600"
+      KROGETTER_LOG_LEVEL: INFO
