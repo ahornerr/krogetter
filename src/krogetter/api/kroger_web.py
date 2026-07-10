@@ -365,7 +365,8 @@ def prepare_session(
         timeout=30,
     )
 
-    # Store selection (if zip_code provided)
+    # Store selection — zip_code selects a specific store; without it,
+    # fall back to the IP-geolocated default store from modality preferences.
     laf_headers: dict[str, str] | None = None
     if zip_code:
         try:
@@ -378,7 +379,35 @@ def prepare_session(
         if not laf_headers:
             logger.warning("Store selection failed; using default store pricing")
 
+    if not laf_headers:
+        laf_headers = _get_default_store_laf(client)
+
     return client, laf_headers
+
+
+def _get_default_store_laf(client: httpx.Client) -> dict[str, str] | None:
+    """Get LAF headers for the IP-geolocated default store.
+
+    When no zip code is provided, the homepage warmup sets a default
+    modality cookie based on IP geolocation. This calls the modality
+    preferences endpoint to retrieve the full LAF object for that store.
+    """
+    resp = client.post(
+        "/atlas/v1/modality/preferences?filter.restrictLafToFc=false"
+    )
+    if resp.status_code != 200:
+        logger.warning(
+            "Default store lookup failed: HTTP %s", resp.status_code
+        )
+        return None
+
+    laf = resp.json().get("data", {}).get("modalityPreferences", {}).get("lafObject", [])
+    if not laf:
+        logger.warning("No LAF object in default store preferences")
+        return None
+
+    logger.info("Using IP-geolocated default store")
+    return {"x-laf-object": json.dumps(laf)}
 
 
 def fetch_product_data(
