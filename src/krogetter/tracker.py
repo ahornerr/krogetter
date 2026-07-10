@@ -86,7 +86,7 @@ class Tracker:
                     len(group_items), homepage, zip_code, modality, store_id,
                 )
                 try:
-                    page, laf_headers, context = prepare_session(
+                    client, laf_headers = prepare_session(
                         browser, homepage, zip_code, modality, store_id
                     )
                 except Exception:
@@ -100,7 +100,7 @@ class Tracker:
                     for item in group_items:
                         try:
                             changes = self._check_item_with_session(
-                                item, page, laf_headers, modality
+                                item, client, laf_headers, modality
                             )
                             if changes:
                                 results.append((item, changes))
@@ -110,20 +110,19 @@ class Tracker:
                                 item.upc, item.label,
                             )
                 finally:
-                    page.close()
-                    context.close()
+                    client.close()
         finally:
             self._cleanup_browser()
 
         return results
 
     def _check_item_with_session(
-        self, item: TrackedItem, page: Any, laf_headers: dict[str, str] | None,
+        self, item: TrackedItem, client: Any, laf_headers: dict[str, str] | None,
         modality: str,
     ) -> list[ChangeEvent]:
         """Check a single item using an existing prepared session."""
         try:
-            product = fetch_product_data(page, item.upc, laf_headers, modality)
+            product = fetch_product_data(client, item.upc, laf_headers, modality)
         except Exception as exc:
             logger.warning("Web fetch failed for %s (%s): %s", item.upc, item.label, exc)
             return []
@@ -181,7 +180,7 @@ class Tracker:
             browser = self._get_browser()
             parsed = urlparse(item.url)
             homepage = f"{parsed.scheme}://{parsed.netloc}/"
-            page, laf_headers, context = prepare_session(
+            client, laf_headers = prepare_session(
                 browser, homepage, item.zip_code, item.modality, item.location_id
             )
         except Exception as exc:
@@ -189,10 +188,9 @@ class Tracker:
             return []
 
         try:
-            return self._check_item_with_session(item, page, laf_headers, item.modality)
+            return self._check_item_with_session(item, client, laf_headers, item.modality)
         finally:
-            page.close()
-            context.close()
+            client.close()
 
     def run(self, interval_seconds: int = 3600) -> None:
         """Run the polling loop forever (until interrupted)."""

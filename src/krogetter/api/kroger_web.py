@@ -1,19 +1,41 @@
-"""Stealth Firefox product fetcher using the Kroger product v2 API.
+"""Kroger product fetcher using the product v2 API.
 
-Fetches product/price/offer data by calling the Kroger product v2 API
-directly from the browser context (with Akamai cookies). No API keys,
-no OAuth, no login required.
+Uses invisible_playwright (stealth Firefox) for the Akamai warmup only.
+After extracting cookies and user-agent from the browser, all API calls
+are made via httpx — no page.evaluate(fetch(...)), no robots.txt trick.
 """
 
 import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from krogetter.models import PriceSnapshot, Product
 from krogetter.url import parse_product_url
 
 logger = logging.getLogger(__name__)
+
+# Browser-like headers required by Akamai on API endpoints.
+# Missing sec-fetch-* or referer results in 403 Access Denied.
+_BROWSER_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "X-Kroger-Channel": "WEB",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+}
+
+_PRODUCT_API_PATH = "/atlas/v1/product/v2/products"
+_PRODUCT_API_PARAMS = {
+    "filter.verified": "true",
+    "projections": "items.full,offers.compact,nutrition.label,"
+    "inventory.projected,variantGroupings.compact",
+}
 
 
 def _parse_price(price_str: str) -> float:
@@ -155,50 +177,16 @@ def _parse_product_data(
     )
 
 
-def _safe_evaluate(page: Any, script: str, arg: Any = None, retries: int = 5) -> Any:
-    """Evaluate JS in page context with retries for navigation-induced context destruction.
-    
-    invisible_playwright runs a real browser (not native headless), so SPA
-    navigations can destroy the execution context mid-evaluate. We call
-    window.stop() between retries to halt all pending navigations and
-    stabilize the page before trying again.
-    """
-    import time
-    
-    last_exc: Exception | None = None
-    for attempt in range(retries):
-        try:
-            return page.evaluate(script, arg)
-        except Exception as exc:
-            last_exc = exc
-            if attempt < retries - 1:
-                logger.debug("evaluate failed (attempt %d): %s — retrying", attempt + 1, exc)
-                # Stop all pending navigations/timers/network activity
-                # to stabilize the execution context for the next attempt
-                try:
-                    page.evaluate("window.stop()")
-                except Exception:
-                    pass
-                time.sleep(2)
-    raise last_exc  # type: ignore[misc]
-
-
 def select_store(
-    page: Any,
+    client: httpx.Client,
     zip_code: str,
     modality: str = "PICKUP",
     store_id: str | None = None,
 ) -> dict[str, str] | None:
     """Search for stores by ZIP and build LAF headers for the product API.
 
-    Calls POST /atlas/v1/modality/options to find stores, then builds the
-    x-laf-object header from the response. The PUT to /modality/preferences
-    is not needed — the product v2 API only requires the x-laf-object header.
-
-    Must be called after warming up the Akamai session on the homepage.
-
     Args:
-        page: A Playwright page with an active Akamai session.
+        client: An httpx.Client with browser cookies from prepare_session().
         zip_code: ZIP code to search for stores.
         modality: "PICKUP" or "DELIVERY".
         store_id: Specific store location ID for PICKUP. If None, uses the
@@ -207,49 +195,28 @@ def select_store(
     Returns:
         Dict with x-laf-object header, or None on failure.
     """
-    # Step 1: Search for stores by ZIP
-    stores_result = _safe_evaluate(
-        page,
-        """async (zip) => {
-        const resp = await fetch('/atlas/v1/modality/options', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/plain, */*',
-                'X-Kroger-Channel': 'WEB',
-            },
-            body: JSON.stringify({address: {postalCode: zip}}),
-        });
-        return {status: resp.status, body: await resp.text()};
-    }""",
-        zip_code,
+    resp = client.post(
+        "/atlas/v1/modality/options",
+        json={"address": {"postalCode": zip_code}},
     )
 
-    if stores_result["status"] != 200:
+    if resp.status_code != 200:
         logger.warning(
-            "Store search failed for ZIP %s: HTTP %s",
-            zip_code,
-            stores_result["status"],
+            "Store search failed for ZIP %s: HTTP %s", zip_code, resp.status_code
         )
         return None
 
-    mo_data = (
-        json.loads(stores_result["body"])
-        .get("data", {})
-        .get("modalityOptions", {})
-    )
+    mo_data = resp.json().get("data", {}).get("modalityOptions", {})
     stores = mo_data.get("storeDetails", [])
     if not stores:
         logger.warning("No stores found for ZIP %s", zip_code)
         return None
 
-    # Step 2: Pick the modality object
+    # Pick the store
     if modality == "DELIVERY":
-        modality_obj = mo_data.get("DELIVERY", {})
-        if not modality_obj:
+        if not mo_data.get("DELIVERY"):
             logger.warning("No DELIVERY modality available for ZIP %s", zip_code)
             return None
-        # For delivery, use the first store for display purposes
         selected_store = stores[0]
     else:  # PICKUP
         pickup_mods = mo_data.get("PICKUP", [])
@@ -257,26 +224,17 @@ def select_store(
             logger.warning("No PICKUP modality available for ZIP %s", zip_code)
             return None
         if store_id:
-            # Find the matching store
-            modality_obj = next(
-                (
-                    m
-                    for m in pickup_mods
-                    if m.get("destination", {}).get("locationId") == store_id
-                ),
-                None,
-            )
             selected_store = next(
                 (s for s in stores if s.get("locationId") == store_id), None
             )
-            if not modality_obj or not selected_store:
+            if not selected_store:
                 logger.warning(
-                    "Store %s not found near ZIP %s; using nearest", store_id, zip_code
+                    "Store %s not found near ZIP %s; using nearest",
+                    store_id,
+                    zip_code,
                 )
-                modality_obj = pickup_mods[0]
                 selected_store = stores[0]
         else:
-            modality_obj = pickup_mods[0]
             selected_store = stores[0]
 
     logger.info(
@@ -286,9 +244,7 @@ def select_store(
         modality,
     )
 
-    # Build LAF headers for the product v2 API.
-    # Only x-laf-object is required — the PUT to /modality/preferences is
-    # unnecessary since we pass the LAF object directly in the header.
+    # Build LAF header — only x-laf-object is required by the product API
     location_id = selected_store.get("locationId", "")
     laf_object = [
         {
@@ -316,56 +272,29 @@ def select_store(
 
 
 def _fetch_product_data_api(
-    page: Any, upc: str, laf_headers: dict[str, str] | None = None
+    client: httpx.Client, upc: str, laf_headers: dict[str, str] | None = None
 ) -> dict[str, Any] | None:
-    """Fetch product data via the Kroger product v2 API from the browser context.
-
-    Calls the same API the SPA calls after page load to get
-    product/price/offer data. Runs inside the browser context
-    (with Akamai cookies and TLS fingerprint).
+    """Fetch product data via the Kroger product v2 API.
 
     Args:
-        page: A Playwright page with an active Akamai session.
+        client: An httpx.Client with browser cookies from prepare_session().
         upc: The 13-digit GTIN/UPC to look up.
-        laf_headers: Optional LAF headers from select_store() for store-specific
-                     pricing. If None, the API may return IP-geolocated pricing.
+        laf_headers: LAF headers from select_store() for store-specific pricing.
 
     Returns the product dict (data.products[0]) or None on failure.
     """
-    # Build headers — LAF headers are required for store-specific pricing
-    headers_js = "{'Accept': 'application/json, text/plain, */*', 'X-Kroger-Channel': 'WEB'"
-    if laf_headers:
-        for k, v in laf_headers.items():
-            # Escape single quotes in JSON values for JS string
-            escaped = v.replace("'", "\\'")
-            headers_js += f", '{k}': '{escaped}'"
-    headers_js += "}"
-
-    result = _safe_evaluate(
-        page,
-        f"""async (upc) => {{
-        const resp = await fetch(
-            '/atlas/v1/product/v2/products?filter.gtin13s=' + upc
-            + '&filter.verified=true'
-            + '&projections=items.full,offers.compact,nutrition.label,'
-            + 'inventory.projected,variantGroupings.compact',
-            {{
-                headers: {headers_js},
-            }}
-        );
-        return {{status: resp.status, body: await resp.text()}};
-    }}""",
-        upc,
+    resp = client.get(
+        _PRODUCT_API_PATH,
+        params={"filter.gtin13s": upc, **_PRODUCT_API_PARAMS},
+        headers=laf_headers or {},
     )
 
-    if result["status"] != 200:
-        logger.warning(
-            "Product API returned HTTP %s for UPC %s", result["status"], upc
-        )
+    if resp.status_code != 200:
+        logger.warning("Product API returned HTTP %s for UPC %s", resp.status_code, upc)
         return None
 
     try:
-        data = json.loads(result["body"])
+        data = resp.json()
     except json.JSONDecodeError as exc:
         logger.warning("Product API response not valid JSON: %s", exc)
         return None
@@ -384,12 +313,12 @@ def prepare_session(
     zip_code: str = "",
     modality: str = "PICKUP",
     store_id: str | None = None,
-) -> tuple[Any, dict[str, str] | None, Any]:
-    """Set up a browser session for product API calls.
+) -> tuple[httpx.Client, dict[str, str] | None]:
+    """Warm up Akamai in the browser, then return an httpx client with cookies.
 
-    Flow: homepage warmup (Akamai) → robots.txt (stabilize context) → store selection.
-    No product page load is needed — the product v2 API is called directly
-    from the browser context after session setup.
+    Playwright is used only for the homepage warmup (Akamai challenge).
+    After extracting cookies and user-agent, all subsequent API calls
+    are made via httpx — no page.evaluate(fetch(...)) needed.
 
     Args:
         browser: A browser instance (from InvisiblePlaywright).
@@ -399,58 +328,71 @@ def prepare_session(
         store_id: Specific store location ID for PICKUP.
 
     Returns:
-        (page, laf_headers, context) — caller must close page and context.
+        (client, laf_headers) — caller must close the client when done.
         laf_headers is None if store selection was skipped or failed.
     """
-    from urllib.parse import urlparse
-
     parsed = urlparse(homepage_url)
-    static_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+    base_url = f"{parsed.scheme}://{parsed.netloc}"
 
+    # Browser warmup — Akamai challenge
     context = browser.new_context()
     page = context.new_page()
+    try:
+        page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
 
-    # Homepage warmup — Akamai requires this before any API calls
-    page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(3000)
+        # Extract cookies and user-agent from the browser
+        cookies = context.cookies()
+        user_agent: str = page.evaluate("navigator.userAgent")
+    finally:
+        page.close()
+        context.close()
 
-    # Navigate to robots.txt to kill the SPA and stabilize the execution
-    # context for API calls. The SPA's client-side router destroys JS
-    # execution contexts mid-evaluate; robots.txt has no SPA.
-    page.goto(static_url, wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(500)
+    # Build httpx client with browser cookies
+    cookie_jar = httpx.Cookies()
+    for c in cookies:
+        cookie_jar.set(c["name"], c["value"], domain=c["domain"], path=c["path"])
+
+    headers = {
+        **_BROWSER_HEADERS,
+        "User-Agent": user_agent,
+        "referer": f"{base_url}/",
+    }
+    client = httpx.Client(
+        cookies=cookie_jar,
+        headers=headers,
+        base_url=base_url,
+        timeout=30,
+    )
 
     # Store selection (if zip_code provided)
     laf_headers: dict[str, str] | None = None
     if zip_code:
         try:
-            laf_headers = select_store(page, zip_code, modality, store_id)
+            laf_headers = select_store(client, zip_code, modality, store_id)
         except Exception:
             logger.warning(
                 "Store selection error; using default store pricing",
                 exc_info=True,
             )
         if not laf_headers:
-            logger.warning(
-                "Store selection failed; using default store pricing"
-            )
+            logger.warning("Store selection failed; using default store pricing")
 
-    return page, laf_headers, context
+    return client, laf_headers
 
 
 def fetch_product_data(
-    page: Any,
+    client: httpx.Client,
     upc: str,
     laf_headers: dict[str, str] | None = None,
     modality: str = "PICKUP",
 ) -> Product | None:
     """Fetch and parse a single product via the product v2 API.
 
-    Requires a prepared session from prepare_session(). This function only
-    makes the API call and parses the response — no page navigation.
+    Requires a prepared session from prepare_session().
 
     Args:
-        page: A Playwright page from prepare_session().
+        client: An httpx.Client from prepare_session().
         upc: The 13-digit GTIN/UPC to look up.
         laf_headers: LAF headers from select_store() for store-specific pricing.
         modality: The fulfillment modality for availability/inventory parsing.
@@ -458,7 +400,7 @@ def fetch_product_data(
     Returns:
         Product with price and offer data, or None on failure.
     """
-    product_data = _fetch_product_data_api(page, upc, laf_headers)
+    product_data = _fetch_product_data_api(client, upc, laf_headers)
     if product_data is None:
         logger.warning("Failed to fetch product data via API for UPC %s", upc)
         return None
@@ -517,7 +459,6 @@ def fetch_product(
         )
         return None
 
-    from urllib.parse import urlparse
     parsed = urlparse(url)
     homepage_url = f"{parsed.scheme}://{parsed.netloc}/"
 
@@ -529,14 +470,13 @@ def fetch_product(
             _cm = InvisiblePlaywright(headless=True)
             browser = _cm.__enter__()
 
-        page, laf_headers, context = prepare_session(
+        client, laf_headers = prepare_session(
             browser, homepage_url, zip_code, modality, store_id
         )
         try:
-            return fetch_product_data(page, upc, laf_headers, modality)
+            return fetch_product_data(client, upc, laf_headers, modality)
         finally:
-            page.close()
-            context.close()
+            client.close()
     except Exception:
         logger.exception("Error fetching product for %r", url_or_upc)
         return None
