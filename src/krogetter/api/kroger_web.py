@@ -183,8 +183,9 @@ def _safe_evaluate(page: Any, script: str, arg: Any = None, retries: int = 5) ->
     """Evaluate JS in page context with retries for navigation-induced context destruction.
     
     invisible_playwright runs a real browser (not native headless), so SPA
-    navigations can destroy the execution context mid-evaluate. We retry
-    after a short wait for the page to settle.
+    navigations can destroy the execution context mid-evaluate. We call
+    window.stop() between retries to halt all pending navigations and
+    stabilize the page before trying again.
     """
     import time
     
@@ -196,7 +197,13 @@ def _safe_evaluate(page: Any, script: str, arg: Any = None, retries: int = 5) ->
             last_exc = exc
             if attempt < retries - 1:
                 logger.debug("evaluate failed (attempt %d): %s — retrying", attempt + 1, exc)
-                time.sleep(3)
+                # Stop all pending navigations/timers/network activity
+                # to stabilize the execution context for the next attempt
+                try:
+                    page.evaluate("window.stop()")
+                except Exception:
+                    pass
+                time.sleep(2)
     raise last_exc  # type: ignore[misc]
 
 
@@ -444,6 +451,13 @@ def fetch_product(
             # to get store-specific pricing. If this fails, we fall back to
             # the IP-geolocated pricing from the first load.
             if zip_code:
+                # Stop all SPA navigations/timers to stabilize the execution
+                # context before making API calls via page.evaluate(fetch())
+                try:
+                    page.evaluate("window.stop()")
+                except Exception:
+                    pass
+
                 store_selected = False
                 try:
                     store_selected = select_store(
