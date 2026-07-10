@@ -2,9 +2,11 @@
 
 import logging
 import time
+from collections import defaultdict
 from typing import Any
+from urllib.parse import urlparse
 
-from krogetter.api.kroger_web import fetch_product as fetch_product_web
+from krogetter.api.kroger_web import fetch_product_data, prepare_session
 from krogetter.detector import ChangeEvent, detect_change
 from krogetter.models import PriceSnapshot, TrackedItem
 from krogetter.storage import Storage
@@ -25,6 +27,7 @@ def _snapshot_from_history(entry: dict) -> PriceSnapshot | None:
             offer_end=entry.get("offer_end"),
             fulfillment_price_string=entry.get("fulfillment_price_string"),
             available=entry.get("available", True),  # default True for old entries
+            inventory_level=entry.get("inventory_level"),  # None for old entries
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Skipping malformed history entry: %s", exc)
@@ -53,39 +56,73 @@ class Tracker:
 
     def check_once(self) -> list[tuple[TrackedItem, list[ChangeEvent]]]:
         """Check all tracked items once.
-        Returns list of (item, changes) for items with changes."""
+
+        Groups items by store config (domain, zip_code, modality, location_id)
+        and prepares one browser session per group — homepage warmup and
+        store selection happen once per group, then all products in that group
+        are fetched via the product v2 API without re-navigating.
+
+        Returns list of (item, changes) for items with changes.
+        """
         items = self._storage.load_items()
         if not items:
             logger.info("No tracked items to check")
             return []
 
+        # Group items by store config to batch API calls
+        groups: dict[tuple[str, str, str, str | None], list[TrackedItem]] = defaultdict(list)
+        for item in items:
+            parsed = urlparse(item.url)
+            homepage = f"{parsed.scheme}://{parsed.netloc}/"
+            key = (homepage, item.zip_code, item.modality, item.location_id)
+            groups[key].append(item)
+
         results: list[tuple[TrackedItem, list[ChangeEvent]]] = []
         try:
-            for item in items:
+            browser = self._get_browser()
+            for (homepage, zip_code, modality, store_id), group_items in groups.items():
+                logger.info(
+                    "Checking %d item(s) for %s (zip=%s, modality=%s, store=%s)",
+                    len(group_items), homepage, zip_code, modality, store_id,
+                )
                 try:
-                    changes = self.check_item(item)
-                    if changes:
-                        results.append((item, changes))
+                    client, laf_headers = prepare_session(
+                        browser, homepage, zip_code, modality, store_id
+                    )
                 except Exception:
                     logger.exception(
-                        "Unexpected error checking item %s (%s)", item.upc, item.label
+                        "Session setup failed for %s; skipping %d items",
+                        homepage, len(group_items),
                     )
+                    continue
+
+                try:
+                    for item in group_items:
+                        try:
+                            changes = self._check_item_with_session(
+                                item, client, laf_headers, modality
+                            )
+                            if changes:
+                                results.append((item, changes))
+                        except Exception:
+                            logger.exception(
+                                "Unexpected error checking item %s (%s)",
+                                item.upc, item.label,
+                            )
+                finally:
+                    client.close()
         finally:
             self._cleanup_browser()
 
         return results
 
-    def check_item(self, item: TrackedItem) -> list[ChangeEvent]:
-        """Check a single tracked item. Returns list of changes (empty if none)."""
+    def _check_item_with_session(
+        self, item: TrackedItem, client: Any, laf_headers: dict[str, str] | None,
+        modality: str,
+    ) -> list[ChangeEvent]:
+        """Check a single item using an existing prepared session."""
         try:
-            browser = self._get_browser()
-            product = fetch_product_web(
-                item.url,
-                browser=browser,
-                zip_code=item.zip_code,
-                modality=item.modality,
-                store_id=item.location_id,
-            )
+            product = fetch_product_data(client, item.upc, laf_headers, modality)
         except Exception as exc:
             logger.warning("Web fetch failed for %s (%s): %s", item.upc, item.label, exc)
             return []
@@ -132,6 +169,28 @@ class Tracker:
                     )
 
         return changes
+
+    def check_item(self, item: TrackedItem) -> list[ChangeEvent]:
+        """Check a single tracked item. Returns list of changes (empty if none).
+
+        This creates its own session. For batch checking, use check_once()
+        instead which groups items and reuses sessions.
+        """
+        try:
+            browser = self._get_browser()
+            parsed = urlparse(item.url)
+            homepage = f"{parsed.scheme}://{parsed.netloc}/"
+            client, laf_headers = prepare_session(
+                browser, homepage, item.zip_code, item.modality, item.location_id
+            )
+        except Exception as exc:
+            logger.warning("Session setup failed for %s (%s): %s", item.upc, item.label, exc)
+            return []
+
+        try:
+            return self._check_item_with_session(item, client, laf_headers, item.modality)
+        finally:
+            client.close()
 
     def run(self, interval_seconds: int = 3600) -> None:
         """Run the polling loop forever (until interrupted)."""

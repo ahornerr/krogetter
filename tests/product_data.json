@@ -1,0 +1,703 @@
+{
+  "item": {
+    "alcoholFlag": false,
+    "assortments": [
+      {
+        "assortmentKey": "7dadd62c-31bf-48c2-996d-90ff9fbb0c01",
+        "modalityEnabled": true,
+        "modalityType": "PICKUP"
+      }
+    ],
+    "bounceFlag": false,
+    "brand": {
+      "name": "Coca-Cola",
+      "code": "1039"
+    },
+    "categories": [
+      {
+        "code": "9",
+        "name": "Beverages"
+      }
+    ],
+    "clickListItem": true,
+    "countriesOfOrigin": "UNITED STATES",
+    "customerFacingSize": "12pk",
+    "dietaryInformation": [
+      "Kosher",
+      "Vegan",
+      "Pescatarian",
+      "Vegetarian"
+    ],
+    "description": "Coca-Cola Vanilla Zero Sugar Fridge Pack Cans, 12 fl oz, 12 Pack",
+    "dimensions": {
+      "height": "4.87 [in_i]",
+      "width": "15.75 [in_i]",
+      "length": "5.25 [in_i]"
+    },
+    "familyCode": [
+      "131"
+    ],
+    "familyTree": {
+      "commodity": {
+        "code": "029",
+        "name": "SOFT DRINKS"
+      },
+      "department": {
+        "code": "12",
+        "name": "SOFT DRINKS"
+      },
+      "subCommodity": {
+        "code": "18218",
+        "name": "SOFT DRINKS 12&15PK CAN CARB (EXCPT TEA)"
+      }
+    },
+    "glutenFreeClaimName": "NO",
+    "gtin14": "00049000048254",
+    "hazmatFlag": false,
+    "homeDeliveryItem": false,
+    "images": [
+      {
+        "perspective": "front",
+        "url": "https://www.kroger.com/product/images/xlarge/front/0004900004825",
+        "size": "xlarge"
+      },
+      {
+        "perspective": "front",
+        "url": "https://www.kroger.com/product/images/large/front/0004900004825",
+        "size": "large"
+      },
+      {
+        "perspective": "front",
+        "url": "https://www.kroger.com/product/images/medium/front/0004900004825",
+        "size": "medium"
+      },
+      {
+        "perspective": "front",
+        "url": "https://www.kroger.com/product/images/small/front/0004900004825",
+        "size": "small"
+      },
+      {
+        "perspective": "front",
+        "url": "https://www.kroger.com/product/images/thumbnail/front/0004900004825",
+        "size": "thumbnail"
+      }
+    ],
+    "itemTypeCode": "0",
+    "krogerDeliveryItem": false,
+    "linkedItem": [
+      "00000000091640",
+      "00000000094900"
+    ],
+    "liveNaturallyEligible": false,
+    "mainImagePerspective": "front",
+    "nonGmo": false,
+    "nutritionalClaims": [
+      "Sugar Free",
+      "Low Sodium",
+      "Low Calorie",
+      "No Added Sugar"
+    ],
+    "omniChannelBrandName": "Coca-Cola",
+    "organicClaimName": "NO",
+    "privacyRestricted": false,
+    "privacyRestrictedStates": [],
+    "prop65": {
+      "required": false
+    },
+    "prop65Info": {
+      "required": false
+    },
+    "ratingsAndReviewsAggregate": {
+      "averageRating": 4.65,
+      "numOfFiveStarRating": 548,
+      "numOfFourStarRating": 78,
+      "numOfOneStarRating": 16,
+      "numOfThreeStarRating": 36,
+      "numOfTwoStarRating": 9,
+      "numberOfReviews": 687
+    },
+    "receiptDescription": "COKE ZERO 12PK",
+    "restrictionGroupCodes": [
+      {
+        "code": "RGC01167",
+        "name": "RGC01167"
+      },
+      {
+        "code": "RGC01182",
+        "name": "RGC01182"
+      },
+      {
+        "code": "RGC01185",
+        "name": "RGC01185"
+      },
+      {
+        "code": "RGC01188",
+        "name": "RGC01188"
+      }
+    ],
+    "romanceDescription": "<p>Soda. Pop. Soft drink. Sparkling beverage. Whatever you call it  nothing compares to the refreshing taste of Coca-Cola Zero Sugar Vanilla. A little flavor can make a lot of magic happen and Coca-Cola Zero Sugar Vanilla is here to make your taste buds happy. Enjoy with friends  on the go or with a meal. Whatever the occasion  Coca-Cola Zero Sugar Vanilla makes life’s special moments a little bit better.Every sip  every “ahhh ” every smile—find that feeling with Coca-Cola Zero Sugar Vanilla. Best enjoyed ice cold for maximum refreshment. Grab a Coca-Cola Zero Sugar Vanilla and find your “ahhh” moment.Enjoy Coca-Cola Zero Sugar Vanilla.</p><ul><li>Delicious combination of Coca-Cola Zero Sugar and vanilla flavor</li><li>Zero sugar in every sip</li><li>34 mg of caffeine in each 12 oz serving</li><li>12 FL OZ in each can</li><li>This sparkling beverage is best enjoyed ice-cold for maximum refreshment</li></ul>",
+    "salesChannelCode": "STORE",
+    "salesChannelName": "Store",
+    "seoDescription": "coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack",
+    "shareLink": "https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack/0004900004825",
+    "snapEligible": true,
+    "soldInStore": false,
+    "tareValue": 0,
+    "taxGroupCode": "PF051986",
+    "taxonomies": [
+      {
+        "commodity": {
+          "code": "001",
+          "name": "Soda & Pop"
+        },
+        "department": {
+          "code": "04",
+          "name": "Beverages"
+        },
+        "subCommodity": {
+          "code": "00009",
+          "name": "Zero Sugar Sodas"
+        }
+      }
+    ],
+    "temperatureIndicator": "55688103654",
+    "temperatureIndicatorName": "Ambient",
+    "upc": "0004900004825",
+    "verified": true,
+    "weight": "9.47 [lb_av]"
+  },
+  "location": {
+    "locations": [
+      {
+        "aisle": {
+          "description": "AISLE 12",
+          "number": "12",
+          "side": "R"
+        },
+        "bayInAisle": "21",
+        "numOfFacings": "3",
+        "physicalShelfNumber": "2",
+        "shelfPositionInBay": "1"
+      }
+    ]
+  },
+  "price": {
+    "displayTemplate": "EveryDayLowPrice",
+    "orderBy": "Unit",
+    "sellBy": "Unit",
+    "storePrices": {
+      "regular": {
+        "defaultDescription": "$11.99",
+        "expirationDate": {
+          "value": "9999-12-31T00:00:00Z",
+          "timezone": "UTC"
+        },
+        "nfor": 1,
+        "nforPrice": "USD 11.99",
+        "unitPrice": "USD 11.99",
+        "price": "USD 11.99",
+        "equivalizedUnitPrice": {
+          "amount": "8.33",
+          "denomination": "CENT",
+          "unit": "PER FLUID OUNCE"
+        },
+        "equivalizedUnitPriceString": "$0.08/fl oz"
+      },
+      "sourceLocationId": "62000115",
+      "sellerId": "KR001",
+      "sellerName": "Kroger"
+    }
+  },
+  "id": "0004900004825",
+  "sourceLocations": [
+    {
+      "dsdItem": true,
+      "id": "62000115",
+      "itemLocations": [
+        {
+          "aisleDescription": "AISLE 12",
+          "aisleNumber": "12",
+          "aisleSide": "R",
+          "areaId": "012",
+          "areaTypeCode": "AL",
+          "areaTypeDescription": "Aisle",
+          "bayNumber": "021",
+          "bayNumberInAisle": "21",
+          "dataSource": "JDA_TRUE_FLOOR_PLAN",
+          "departmentCode": "GR",
+          "departmentDescription": "Grocery",
+          "fixtureNumber": "2",
+          "itemDepth": "5.25000",
+          "itemHeight": "4.87",
+          "itemWidth": "15.75",
+          "numberOfDepthFacings": "1",
+          "numberOfFacings": "3",
+          "numberOfVerticalFacings": "2",
+          "orientationCode": "R",
+          "orientationDescription": "Right",
+          "pogName": "D620_L00115_D01_C029_V660_F062_MX_H084_B22_U22",
+          "position": "1",
+          "shelfNumber": "2",
+          "shelfPositionInBay": "1",
+          "subAreaId": "XXX",
+          "subAreaTypeCode": "XX",
+          "subAreaTypeDescription": "XX"
+        }
+      ],
+      "modalityAvailabilities": [
+        {
+          "availability": true,
+          "modalityType": "DELIVERY"
+        },
+        {
+          "availability": true,
+          "modalityType": "IN_STORE"
+        },
+        {
+          "availability": true,
+          "modalityType": "PICKUP"
+        },
+        {
+          "availability": false,
+          "modalityType": "SHIP"
+        }
+      ],
+      "prices": [
+        {
+          "displayTemplate": "EveryDayLowPrice",
+          "effectiveDate": {
+            "timezone": "Z",
+            "value": "2026-03-23T14:35:54.801Z"
+          },
+          "expirationDate": {
+            "timezone": "Z",
+            "value": "9999-12-31T00:00:00Z"
+          },
+          "orderBy": "UNIT",
+          "regular": {
+            "defaultDescription": "$11.99",
+            "equivalizedUnitPrice": {
+              "amount": "8.33",
+              "denomination": "CENT",
+              "unit": "PER FLUID OUNCE"
+            },
+            "nFor": {
+              "count": 1,
+              "price": "USD 11.99"
+            },
+            "price": "USD 11.99"
+          },
+          "sellBy": "UNIT",
+          "sellerId": "KR001",
+          "sellerName": "Kroger",
+          "womenInfantChildFlg": "N"
+        }
+      ],
+      "restrictions": {
+        "quantityRestrictions": {
+          "delivery": [
+            {
+              "code": "RGC01185",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2024-11-28T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2024-11-22T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01188",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2024-12-24T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2024-12-18T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01185",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2025-04-01T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 8,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2025-03-26T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01348",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2026-06-30T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 12,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2026-06-24T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01182",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2026-07-07T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2026-07-01T00:00:00Z"
+              }
+            }
+          ],
+          "inStore": [
+            {
+              "code": "RGC01185",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2024-11-28T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2024-11-22T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01188",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2024-12-24T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2024-12-18T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01185",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2025-04-01T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 8,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2025-03-26T00:00:00Z"
+              }
+            }
+          ],
+          "pickup": [
+            {
+              "code": "RGC01185",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2024-11-28T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2024-11-22T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01188",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2024-12-24T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2024-12-18T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01185",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2025-04-01T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 8,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2025-03-26T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01348",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2026-06-30T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 12,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2026-06-24T00:00:00Z"
+              }
+            },
+            {
+              "code": "RGC01182",
+              "endTime": {
+                "timezone": "UTC",
+                "value": "2026-07-07T23:59:59Z"
+              },
+              "kind": "VIOLATION",
+              "maximumOrderQuantity": 10,
+              "startTime": {
+                "timezone": "UTC",
+                "value": "2026-07-01T00:00:00Z"
+              }
+            }
+          ]
+        },
+        "shippable": false
+      },
+      "laf": [
+        {
+          "modality": {
+            "type": "PICKUP",
+            "handoffLocation": {
+              "storeId": "62000115",
+              "facilityId": "13050"
+            },
+            "handoffAddress": {
+              "address": {
+                "addressLines": [
+                  "1950 Chestnut Pl"
+                ],
+                "cityTown": "Denver",
+                "name": "Union Station",
+                "postalCode": "80202",
+                "stateProvince": "CO",
+                "residential": false,
+                "countryCode": "US"
+              },
+              "location": {
+                "lat": 39.757185,
+                "lng": -104.998818
+              }
+            }
+          },
+          "sources": [
+            {
+              "storeId": "62000115",
+              "facilityId": "13050"
+            }
+          ],
+          "assortmentKeys": [
+            "7dadd62c-31bf-48c2-996d-90ff9fbb0c01"
+          ],
+          "listingKeys": [
+            "62000115"
+          ]
+        }
+      ],
+      "sourceId": "62000115",
+      "sellerId": "KR001",
+      "sellerName": "Kroger"
+    }
+  ],
+  "itemsV1": {
+    "product": {
+      "familyTree": {
+        "commodity": {
+          "code": "029",
+          "name": "SOFT DRINKS"
+        },
+        "primaryDepartment": {
+          "code": "01",
+          "name": "GROCERY",
+          "recapDepartment": {
+            "code": "01",
+            "department": {
+              "code": "12",
+              "name": "SOFT DRINKS"
+            },
+            "name": "GROCERY"
+          }
+        },
+        "subCommodity": {
+          "code": "18218",
+          "name": "SOFT DRINKS 12&15PK CAN CARB (EXCPT TEA)"
+        }
+      },
+      "id": "1000137366",
+      "nutritionalRating": "36"
+    }
+  },
+  "postalCodes": [
+    {
+      "postalCode": "80202",
+      "prices": [
+        {
+          "displayTemplate": "WhiteTag",
+          "effectiveDate": {
+            "timezone": "Z",
+            "value": "2026-07-08T04:00:00Z"
+          },
+          "expirationDate": {
+            "timezone": "Z",
+            "value": "9999-12-31T00:00:00Z"
+          },
+          "orderBy": "UNIT",
+          "regular": {
+            "defaultDescription": "$11.99",
+            "nFor": {
+              "count": 1,
+              "price": "USD 11.99"
+            },
+            "price": "USD 11.99"
+          },
+          "sellBy": "UNIT",
+          "sellerId": "KR001",
+          "sellerName": "KROGER"
+        }
+      ]
+    }
+  ],
+  "laf": [
+    {
+      "assortmentKeys": [
+        "7dadd62c-31bf-48c2-996d-90ff9fbb0c01"
+      ],
+      "listingKeys": [
+        "62000115"
+      ],
+      "modality": {
+        "handoffAddress": {
+          "address": {
+            "addressLines": [
+              "1950 Chestnut Pl"
+            ],
+            "cityTown": "Denver",
+            "countryCode": "US",
+            "postalCode": "80202",
+            "stateProvince": "CO"
+          }
+        },
+        "handoffLocation": {
+          "facilityId": "13050",
+          "storeId": "62000115"
+        },
+        "type": "PICKUP"
+      },
+      "priceAvailabilities": [
+        {
+          "id": "62000115",
+          "lookup": "LISTING_KEY",
+          "storeId": "62000115"
+        }
+      ],
+      "sources": [
+        {
+          "facilityId": "13050",
+          "storeId": "62000115"
+        }
+      ]
+    }
+  ],
+  "inventorySummaries": [],
+  "offers": [
+    {
+      "gtin13": "0004900004825",
+      "displayTemplate": "MUST_BUY",
+      "offerCode": "b083b6eb-0a01-4a15-98eb-6364d6919a38",
+      "requirementId": "720342",
+      "defaultDescription": "Buy 2 Get 1 Free",
+      "start": "2026-07-08T00:00:00",
+      "end": "2026-07-21T23:59:59",
+      "startDate": {
+        "value": "2026-07-08T00:00:00.000Z",
+        "timezone": "UTC"
+      },
+      "endDate": {
+        "value": "2026-07-21T23:59:59.000Z",
+        "timezone": "UTC"
+      },
+      "modalities": [
+        "PICKUP"
+      ]
+    }
+  ],
+  "fulfillmentOptions": [
+    "PICKUP"
+  ],
+  "fulfillmentSummaries": [
+    {
+      "type": "PICKUP",
+      "regular": {
+        "price": "USD 11.99",
+        "displayTemplate": "EveryDayLowPrice",
+        "priceString": "Buy 2 Get 1 Free",
+        "pricePerUnitString": "12pk",
+        "equivalizedUnitPrice": {
+          "amount": "8.33",
+          "denomination": "CENT",
+          "unit": "PER FLUID OUNCE"
+        },
+        "equivalizedUnitPriceString": "$0.08/fl oz"
+      },
+      "availability": {
+        "sellable": true,
+        "inventoryLevel": "HIGH"
+      }
+    },
+    {
+      "type": "DELIVERY",
+      "regular": {
+        "price": "USD 11.99",
+        "displayTemplate": "EveryDayLowPrice",
+        "pricePerUnitString": "12pk",
+        "equivalizedUnitPrice": {
+          "amount": "8.33",
+          "denomination": "CENT",
+          "unit": "PER FLUID OUNCE"
+        },
+        "equivalizedUnitPriceString": "$0.08/fl oz"
+      },
+      "availability": {
+        "sellable": false,
+        "unavailabilityMessage": "Unavailable"
+      }
+    },
+    {
+      "type": "IN_STORE",
+      "regular": {
+        "price": "USD 11.99",
+        "displayTemplate": "EveryDayLowPrice",
+        "pricePerUnitString": "12pk",
+        "equivalizedUnitPrice": {
+          "amount": "8.33",
+          "denomination": "CENT",
+          "unit": "PER FLUID OUNCE"
+        },
+        "equivalizedUnitPriceString": "$0.08/fl oz"
+      },
+      "availability": {
+        "sellable": false,
+        "unavailabilityMessage": "Unavailable"
+      }
+    }
+  ]
+}

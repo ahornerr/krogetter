@@ -64,7 +64,7 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
-        self.config_entry = config_entry
+        super().__init__(config_entry)
 
     def _get_api(self) -> KrogetterAPI:
         """Get the API client from hass data."""

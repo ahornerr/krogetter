@@ -38,6 +38,7 @@ class SnapshotResponse(BaseModel):
     offer_end: str | None
     fulfillment_price_string: str | None
     available: bool
+    inventory_level: str | None
     current_price: float
     effective_unit_price: float | None
     is_on_sale: bool

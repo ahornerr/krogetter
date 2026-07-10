@@ -53,6 +53,7 @@ class KrogetterOnSaleSensor(CoordinatorEntity, BinarySensorEntity):
         latest = item["latest"]
         return {
             "available": latest.get("available", True),
+            "inventory_level": latest.get("inventory_level"),
             "offer_description": latest.get("synthetic_description"),
             "savings": latest.get("savings"),
             "savings_percent": latest.get("savings_percent"),

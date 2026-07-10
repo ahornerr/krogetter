@@ -137,6 +137,7 @@ class Storage:
             "offer_end": snapshot.offer_end,
             "fulfillment_price_string": snapshot.fulfillment_price_string,
             "available": snapshot.available,
+            "inventory_level": snapshot.inventory_level,
         }
         line = json.dumps(entry, ensure_ascii=False) + "\n"
 
