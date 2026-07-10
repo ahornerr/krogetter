@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project local
+.env
+.env.local
+.env.*.local
+*.log
+config.yaml
+config.yml
+config.json
+tracked_items.json
+history.jsonl
+tracked_items.json.bak
+
+# Deepwork session state (keep readable by tooling, out of git)
+.slim/deepwork/
+
+# Camoufox binary cache
+.camoufox/
+
+# HAR files / APK analysis artifacts
+*.har
+*.xapk
+android/
