@@ -1,6 +1,6 @@
 """Tests for change detection logic."""
 
-from krogetter.detector import ChangeEvent, detect_change
+from krogetter.detector import detect_change
 from krogetter.models import PriceSnapshot
 
 

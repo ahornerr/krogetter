@@ -1,0 +1,57 @@
+add_item:
+  name: Add Item
+  description: Add a product to track.
+  fields:
+    url:
+      name: URL
+      description: Product URL or UPC.
+      required: true
+      selector:
+        text:
+    label:
+      name: Label
+      description: Custom label for this item.
+      required: false
+      selector:
+        text:
+    zip_code:
+      name: ZIP Code
+      description: ZIP code for store selection.
+      required: false
+      selector:
+        text:
+    delivery:
+      name: Delivery
+      description: Use delivery modality instead of pickup.
+      required: false
+      default: false
+      selector:
+        boolean:
+    store_id:
+      name: Store ID
+      description: Specific store location ID (requires ZIP code).
+      required: false
+      selector:
+        text:
+
+remove_item:
+  name: Remove Item
+  description: Remove a tracked product.
+  fields:
+    upc:
+      name: UPC
+      description: UPC of the item to remove.
+      required: true
+      selector:
+        text:
+
+check_now:
+  name: Check Now
+  description: Trigger an immediate price check.
+  fields:
+    upc:
+      name: UPC
+      description: UPC of a specific item to check. Omit to check all items.
+      required: false
+      selector:
+        text:

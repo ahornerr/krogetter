@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-from krogetter.detector import ChangeEvent
 from krogetter.models import PriceSnapshot, Product, TrackedItem
 from krogetter.storage import Storage
 from krogetter.tracker import Tracker
