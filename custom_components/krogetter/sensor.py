@@ -56,16 +56,56 @@ SENSORS = [
 ]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    """Set up Krogetter sensors."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = data["coordinator"]
+    """Set up Krogetter sensors with dynamic add/remove."""
+    coordinator: DataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
-    entities = []
-    for item in coordinator.data or []:
-        upc = item["upc"]
-        for description in SENSORS:
-            entities.append(KrogetterSensor(coordinator, description, item))
-    async_add_entities(entities)
+    # Track entities by UPC so we can remove them when items are removed
+    entities_by_upc: dict[str, list[KrogetterSensor]] = {}
+
+    def _sync_entities() -> None:
+        """Create entities for new items, remove entities for deleted items."""
+        current_upcs = {item["upc"] for item in coordinator.data or []}
+
+        # Remove entities for items no longer tracked
+        removed = set(entities_by_upc) - current_upcs
+        for upc in removed:
+            for entity in entities_by_upc.pop(upc):
+                entity.async_remove()
+
+        # Add entities for newly tracked items
+        for item in coordinator.data or []:
+            upc = item["upc"]
+            if upc not in entities_by_upc:
+                new_entities = [
+                    KrogetterSensor(coordinator, desc, item) for desc in SENSORS
+                ]
+                entities_by_upc[upc] = new_entities
+                async_add_entities(new_entities)
+
+    # Initial population
+    _sync_entities()
+
+    # Single integration-level sensor for last refresh time
+    async_add_entities([KrogetterLastRefreshSensor(coordinator, entry.entry_id)])
+
+    # Listen for coordinator updates — creates/removes entities dynamically
+    entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
+
+
+class KrogetterLastRefreshSensor(CoordinatorEntity, SensorEntity):
+    """Sensor showing when the coordinator last refreshed data."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: DataUpdateCoordinator, entry_id: str) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"krogetter_{entry_id}_last_refresh"
+        self._attr_name = "Krogetter Last Refresh"
+
+    @property
+    def native_value(self):
+        return self.coordinator.last_update_success_time
 
 class KrogetterSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, description, item: dict) -> None:
