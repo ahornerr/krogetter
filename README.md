@@ -4,47 +4,64 @@ Track sale prices and offers on Kroger family store websites (King Soopers, Krog
 
 ## How It Works
 
-Krogetter uses [invisible_playwright](https://github.com/feder-cr/invisible_playwright) (a stealth Firefox build with C++-patched fingerprinting) to call the Kroger product v2 API (`/atlas/v1/product/v2/products`) from within a real browser context. This gets prices, offers, promo descriptions, sale dates, availability, and inventory levels — all without API keys, OAuth, or login.
+Krogetter uses [invisible_playwright](https://github.com/feder-cr/invisible_playwright) (a stealth Firefox build with C++-patched fingerprinting) to pass Akamai bot detection, then calls the Kroger product v2 API (`/atlas/v1/product/v2/products`) via native `httpx` for all data. No API keys, no OAuth, no login required.
 
-Store selection is done via the Kroger modality API — `POST /atlas/v1/modality/options` to find stores near a ZIP code, then `PUT /atlas/v1/modality/preferences` to select one. The resulting LAF (Location And Fulfillment) headers are passed to the product API for store-specific pricing.
+The browser is used **only** for the initial Akamai warmup (one homepage load). After extracting cookies and user-agent, all API calls — store search, product fetches, price checks — are plain HTTP. Sessions are cached across polling cycles, so subsequent checks make zero browser calls.
+
+```mermaid
+flowchart LR
+    subgraph Warmup["Session Setup (once per store)"]
+        A[invisible_playwright] -->|loads homepage| B[Akamai challenge]
+        B -->|JS sensor passes| C[Valid cookies]
+        C --> D[httpx.Client]
+    end
+
+    subgraph Polling["Polling Cycle (every cycle)"]
+        D -->|POST /modality/options| E[Store search]
+        E -->|build x-laf-object| F[LAF headers]
+        D -->|GET /product/v2/products| G[Product data]
+        G --> H[Parse price, offers, availability]
+    end
+
+    Warmup -.->|cached| Polling
+```
+
+### Store Selection
+
+Store selection uses the Kroger modality API:
+- `POST /atlas/v1/modality/options` — search stores by ZIP code
+- Build `x-laf-object` header from the response (Location And Fulfillment)
+- Pass to product API for store-specific pricing
+
+No `PUT /modality/preferences` is needed — the `x-laf-object` header is all the product API requires.
+
+When no ZIP code is provided, the IP-geolocated default store is used automatically (via `POST /atlas/v1/modality/preferences`).
 
 ## Architecture
 
 The stealth Firefox binary requires GTK/NSS system libraries that cannot run inside Home Assistant's Alpine-based container. Krogetter solves this with a two-part architecture:
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Home Assistant                                       │
-│                                                       │
-│  ┌─────────────────────────────────────────────┐    │
-│  │  Krogetter Integration (via HACS)            │    │
-│  │                                               │    │
-│  │  Config Flow → API URL → health check        │    │
-│  │  Coordinator polls /api/items every 5 min    │    │
-│  │                                               │    │
-│  │  Per tracked item (device):                  │    │
-│  │    sensor.price          $11.99               │    │
-│  │    sensor.eff_unit_price  $7.99               │    │
-│  │    binary_sensor.on_sale  on                  │    │
-│  │    sensor.offer           "Buy 2 Get 1 Free"  │    │
-│  │    sensor.savings         $4.00               │    │
-│  │    sensor.savings_pct     33.4%               │    │
-│  │                                               │    │
-│  │  Services:                                    │    │
-│  │    krogetter.add_item                        │    │
-│  │    krogetter.remove_item                     │    │
-│  │    krogetter.check_now                       │    │
-│  └──────────────────┬──────────────────────────┘    │
-│                     │ HTTP                            │
-└─────────────────────┼────────────────────────────────┘
-                      │
-┌─────────────────────┼────────────────────────────────┐
-│  Krogetter API Server │ (Docker sidecar)              │
-│                     │                                 │
-│  FastAPI on :8585                                     │
-│  Background polling loop (stealth Firefox)             │
-│  Stores tracked_items.json + history.jsonl            │
-└───────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph HA["Home Assistant"]
+        direction TB
+        Integration["Krogetter Integration (HACS)"]
+        Integration --> Coordinator["DataUpdateCoordinator"]
+        Coordinator -->|polls /api/items| API
+        Integration --> Entities["Sensors & Binary Sensors"]
+        Integration --> Services["Services: add_item, remove_item, check_now"]
+    end
+
+    subgraph Sidecar["Docker Sidecar"]
+        direction TB
+        API["FastAPI :8585"]
+        API --> Tracker["Tracker"]
+        Tracker --> Browser["invisible_playwright (Akamai warmup)"]
+        Tracker --> HttpClient["httpx (API calls)"]
+        Tracker --> Storage["tracked_items.json + history.jsonl"]
+    end
+
+    HA -->|HTTP| Sidecar
 ```
 
 ## Quick Start (Home Assistant)
@@ -86,10 +103,10 @@ If HA and Krogetter are on the same Docker network, the API URL is `http://kroge
 
 ### 3. Add items to track
 
-Use the `krogetter.add_item` service in HA:
+Via the integration's Configure button, or use the `krogetter.add_item` service:
 
 ```yaml
-# Basic — auto-derives label from URL
+# Basic — auto-derives label from URL, uses IP-geolocated default store
 service: krogetter.add_item
 data:
   url: "https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar/0004900004825"
@@ -172,16 +189,37 @@ krogetter config
 
 ## Home Assistant Entities
 
-Each tracked item creates a device with 6 entities:
+Each tracked item creates a device with 6 entities, plus one integration-level sensor:
+
+### Per-item entities
 
 | Entity | Type | State | Unit | Description |
 |--------|------|-------|------|-------------|
-| Price | sensor | $11.99 | $ | Regular shelf price |
-| Effective Unit Price | sensor | $7.99 | $ | Per-unit price after offer (e.g. Buy 2 Get 1 Free) |
+| Price | sensor | 11.99 | $ | Regular shelf price |
+| Effective Unit Price | sensor | 7.99 | $ | Per-unit price after offer (e.g. Buy 2 Get 1 Free) |
 | On Sale | binary_sensor | on/off | — | True if there's an active offer or discount |
 | Offer | sensor | "Buy 2 Get 1 Free" | — | Human-readable offer description |
-| Savings | sensor | $4.00 | $ | Dollar savings per unit |
+| Savings | sensor | 4.00 | $ | Dollar savings per unit |
 | Savings Percent | sensor | 33.4 | % | Percentage savings per unit |
+
+### Integration-level entities
+
+| Entity | Type | State | Description |
+|--------|------|-------|-------------|
+| Last Refresh | sensor | 2026-07-10T15:30:00Z | Timestamp of last successful coordinator refresh |
+
+### Binary sensor attributes
+
+The `On Sale` binary sensor includes these extra state attributes:
+
+| Attribute | Description |
+|-----------|-------------|
+| `available` | Whether the product is sellable at the selected store |
+| `inventory_level` | Inventory level (e.g. "HIGH", "MEDIUM", "LOW") |
+| `offer_description` | Offer text (e.g. "Buy 2 Get 1 Free") |
+| `savings` | Dollar savings per unit |
+| `savings_percent` | Percentage savings per unit |
+| `checked_at` | ISO timestamp of last price check |
 
 ## Home Assistant Services
 
@@ -224,6 +262,15 @@ The product v2 API response contains an `offers[]` array with offer details:
 ```
 
 Krogetter parses "Buy N Get M Free" patterns to compute the effective unit price:
+
+```mermaid
+flowchart LR
+    A["Regular price: $11.99"] --> B{"Offer: Buy 2 Get 1 Free"}
+    B --> C["Pay $23.98 for 3 units"]
+    C --> D["Effective: $7.99/unit"]
+    D --> E["Savings: $4.00 (33.4%)"]
+```
+
 - "Buy 2 Get 1 Free" at $11.99 → pay $23.98 for 3 units → **$7.99/unit** (33.4% off)
 - "Buy 1 Get 1 Free" at $5.00 → pay $5.00 for 2 units → **$2.50/unit** (50% off)
 
