@@ -19,12 +19,45 @@
   "options": {
     "step": {
       "init": {
-        "title": "Krogetter Options",
-        "description": "Configure polling interval.",
+        "title": "Krogetter",
+        "menu_options": {
+          "add_item": "Add Item",
+          "remove_item": "Remove Item",
+          "settings": "Settings"
+        }
+      },
+      "add_item": {
+        "title": "Add Tracked Item",
+        "description": "Enter the product URL from a Kroger family store website.",
+        "data": {
+          "url": "Product URL",
+          "label": "Label (optional)",
+          "zip_code": "ZIP Code (optional)",
+          "delivery": "Use delivery pricing",
+          "store_id": "Store ID (optional, requires ZIP)"
+        }
+      },
+      "remove_item": {
+        "title": "Remove Tracked Item",
+        "description": "Select an item to stop tracking.",
+        "data": {
+          "upc": "Item"
+        }
+      },
+      "settings": {
+        "title": "Krogetter Settings",
+        "description": "Configure how often Home Assistant polls the API server for updated data.",
         "data": {
           "poll_interval": "Poll Interval (seconds, minimum 60)"
         }
       }
+    },
+    "error": {
+      "add_failed": "Failed to add item. Check the URL and try again.",
+      "remove_failed": "Failed to remove item."
+    },
+    "abort": {
+      "no_items": "No tracked items to remove."
     }
   }
 }
