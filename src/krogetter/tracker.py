@@ -1,8 +1,10 @@
 """Polling tracker for checking tracked item prices."""
 
 import logging
+import threading
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import urlparse
 
@@ -66,6 +68,15 @@ class Tracker:
         self._browser_cm: Any = None  # Browser context manager handle
         # Cached sessions: store_key -> (httpx.Client, laf_headers)
         self._sessions: dict[tuple[str, str, str, str | None], tuple[httpx.Client, dict[str, str] | None]] = {}
+        # Playwright's sync API is not thread-safe: the browser must be created
+        # and used from a single thread.  A single-worker executor serializes
+        # all browser operations (prepare_session) onto one dedicated thread,
+        # regardless of whether the caller is the polling thread or a FastAPI
+        # thread-pool worker.
+        self._browser_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="krogetter-browser"
+        )
+        self._sessions_lock = threading.Lock()
 
     def _get_browser(self) -> Any:
         """Lazily initialize a shared browser instance."""
@@ -88,18 +99,48 @@ class Tracker:
             force_refresh: If True, close the old client and create a new one
                           (used when API calls fail with 403/429).
         """
-        if force_refresh and key in self._sessions:
-            old_client, _ = self._sessions.pop(key)
-            try:
-                old_client.close()
-            except Exception:
-                pass
-            logger.info("Refreshing expired session for %s", key[0])
+        with self._sessions_lock:
+            if force_refresh and key in self._sessions:
+                old_client, _ = self._sessions.pop(key)
+                try:
+                    old_client.close()
+                except Exception:
+                    pass
+                logger.info("Refreshing expired session for %s", key[0])
 
-        if key in self._sessions:
-            return self._sessions[key]
+            if key in self._sessions:
+                return self._sessions[key]
 
-        # Create new session — this is the only place the browser is used
+        # prepare_session touches the Playwright browser, whose sync API is
+        # not thread-safe.  Run it on the dedicated browser thread so that
+        # browser creation and all new_context() calls happen on one thread.
+        result = self._browser_executor.submit(self._create_session, key).result()
+
+        if result is None:
+            return None
+
+        with self._sessions_lock:
+            # Another thread may have created the same session while we waited.
+            if key in self._sessions:
+                client, _ = result
+                try:
+                    client.close()
+                except Exception:
+                    pass
+                return self._sessions[key]
+            self._sessions[key] = result
+
+        return result
+
+    def _create_session(
+        self, key: tuple[str, str, str, str | None]
+    ) -> tuple[httpx.Client, dict[str, str] | None] | None:
+        """Create a new session on the browser thread.
+
+        Playwright's sync API binds the browser to the thread that created it.
+        This method must run inside ``_browser_executor`` so that every
+        ``browser.new_context()`` call happens on the same thread.
+        """
         homepage, zip_code, modality, store_id = key
         try:
             browser = self._get_browser()
@@ -109,9 +150,7 @@ class Tracker:
         except Exception:
             logger.exception("Session setup failed for %s", homepage)
             return None
-
-        self._sessions[key] = (client, laf_headers)
-        return client, laf_headers
+        return (client, laf_headers)
 
     def check_once(self) -> list[tuple[TrackedItem, list[ChangeEvent]]]:
         """Check all tracked items once.
@@ -310,20 +349,30 @@ class Tracker:
 
     def _cleanup(self) -> None:
         """Close all cached sessions and the browser."""
-        for client, _ in self._sessions.values():
-            try:
-                client.close()
-            except Exception:
-                pass
-        self._sessions.clear()
+        with self._sessions_lock:
+            for client, _ in self._sessions.values():
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            self._sessions.clear()
 
-        if self._browser is not None:
-            try:
-                self._browser_cm.__exit__(None, None, None)
-            except Exception:
-                logger.debug("Error closing browser", exc_info=True)
-            self._browser = None
-            self._browser_cm = None
+        # The browser was created on the executor thread; close it there too
+        # to avoid the same greenlet thread-switch error on shutdown.
+        def _close_browser() -> None:
+            if self._browser is not None:
+                try:
+                    self._browser_cm.__exit__(None, None, None)
+                except Exception:
+                    logger.debug("Error closing browser", exc_info=True)
+                self._browser = None
+                self._browser_cm = None
+
+        try:
+            self._browser_executor.submit(_close_browser).result(timeout=10)
+        except Exception:
+            logger.debug("Browser cleanup timed out or failed")
+        self._browser_executor.shutdown(wait=False)
 
     # Backwards compat
     def _cleanup_browser(self) -> None:
