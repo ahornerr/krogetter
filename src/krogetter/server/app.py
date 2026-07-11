@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -25,7 +26,9 @@ from krogetter.server.schemas import (
 )
 from krogetter.storage import Storage
 from krogetter.tracker import Tracker, _snapshot_from_history
-from krogetter.url import extract_upc_or_passthrough, slug_to_label
+from krogetter.url import extract_upc_or_passthrough
+
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
 #  Helper functions
@@ -163,27 +166,44 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        # Derive label
-        label = body.label
-        if label is None and body.url.startswith(("http://", "https://")):
-            label = slug_to_label(body.url)
-
         modality = "DELIVERY" if body.delivery else "PICKUP"
 
+        # Create a temporary item to fetch product data
         item = TrackedItem(
             url=body.url,
             upc=upc,
-            label=label or upc,
+            label=upc,  # placeholder — will be replaced from API
             location_id=body.store_id,
             zip_code=body.zip_code or "",
             modality=modality,
             added_at=datetime.now(timezone.utc).isoformat(),  # noqa: UP017
         )
 
+        # Fetch product from API to get the real label and initial price
+        with lock:
+            product = tracker.fetch_product_for_item(item)
+
+        if product is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not fetch product data for UPC {upc}. "
+                       "Check the URL is correct and the product exists.",
+            )
+
+        # Use the product description as the label
+        label = product.description
+        item.label = label
+
+        # Store the item
         try:
             storage.add_item(item)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        # Store the initial price snapshot
+        if product.price:
+            storage.append_history(item.upc, product.price)
+            logger.info("Initial check for %s: %s", item.upc, label)
 
         return jsonable_encoder(_item_to_response(item))
 

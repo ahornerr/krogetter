@@ -11,7 +11,7 @@ from krogetter.logging_setup import setup_logging
 from krogetter.models import TrackedItem
 from krogetter.storage import Storage
 from krogetter.tracker import Tracker, _snapshot_from_history
-from krogetter.url import extract_upc_or_passthrough, slug_to_label
+from krogetter.url import extract_upc_or_passthrough
 
 
 def _error(msg: str) -> NoReturn:
@@ -58,7 +58,6 @@ def main(ctx: click.Context, log_level: str | None) -> None:
 
 @main.command()
 @click.argument("url_or_upc")
-@click.option("--label", "-l", default=None, help="Custom label for this item")
 @click.option("--store", "store_id", default=None, help="Kroger store location ID (e.g. 62000093). Requires --zip.")
 @click.option("--zip", "zip_code", default=None, help="ZIP code for store selection. Selects nearest store for pickup.")
 @click.option("--delivery", is_flag=True, help="Use delivery modality instead of pickup. Requires --zip.")
@@ -66,7 +65,6 @@ def main(ctx: click.Context, log_level: str | None) -> None:
 def add(
     ctx: click.Context,
     url_or_upc: str,
-    label: str | None,
     store_id: str | None,
     zip_code: str | None,
     delivery: bool,
@@ -77,14 +75,13 @@ def add(
 
         krogetter add https://www.kingsoopers.com/p/coca-cola-.../0004900004825
 
-        krogetter add 0004900004825 --label "Coke Vanilla"
-
         krogetter add https://www.kingsoopers.com/p/.../0004900004825 --zip 80207
 
         krogetter add https://www.kingsoopers.com/p/.../0004900004825 --zip 80207 --delivery
 
         krogetter add https://www.kingsoopers.com/p/.../0004900004825 --zip 80207 --store 62000093
 
+    The product label is fetched from the Kroger API automatically.
     By default, uses IP-based geolocation for store pricing.
     Use --zip to select a store near a specific ZIP code.
     Use --delivery with --zip to check delivery pricing instead of pickup.
@@ -106,29 +103,47 @@ def add(
 
     modality = "DELIVERY" if delivery else "PICKUP"
 
-    # Auto-derive label from URL slug if not provided
-    if label is None and url_or_upc.startswith(("http://", "https://")):
-        label = slug_to_label(url_or_upc)
-
-    # Create TrackedItem
+    # Create TrackedItem with placeholder label
     item = TrackedItem(
         url=url_or_upc,
         upc=upc,
-        label=label or upc,
+        label=upc,
         location_id=store_id,
         zip_code=zip_code or "",
         modality=modality,
         added_at=datetime.now(UTC).isoformat(),
     )
 
-    # Add to storage
+    # Fetch product data to get the real label and initial price
     storage = Storage(config.data_dir)
+    tracker = Tracker(storage=storage)
+    try:
+        product = tracker.fetch_product_for_item(item)
+    finally:
+        tracker._cleanup()
+
+    if product is None:
+        _error(f"Could not fetch product data for UPC {upc}. Check the URL is correct.")
+
+    # Use the product description as the label
+    label = product.description
+    item.label = label
+
+    # Add to storage
     try:
         storage.add_item(item)
     except ValueError as exc:
         _error(str(exc))
 
+    # Store the initial price snapshot
+    if product.price:
+        storage.append_history(item.upc, product.price)
+
     click.echo(f"Added: {item.label} (UPC: {item.upc})")
+    if product.price:
+        click.echo(f"  Price: ${product.price.regular:.2f}")
+        if product.price.is_on_sale:
+            click.echo(f"  On sale: {product.price.synthetic_description}")
     if zip_code:
         if store_id:
             click.echo(f"  Store: {store_id} (PICKUP, ZIP {zip_code})")

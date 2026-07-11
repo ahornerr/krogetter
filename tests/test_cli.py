@@ -6,7 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from krogetter.cli import main
-from krogetter.models import TrackedItem
+from krogetter.models import PriceSnapshot, Product, TrackedItem
 
 
 @pytest.fixture
@@ -15,16 +15,33 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def _make_product(upc: str = "0004900004825") -> Product:
+    """Create a mock Product for testing."""
+    return Product(
+        product_id=upc,
+        upc=upc,
+        description="Coca-Cola Classic 12 Pack",
+        brand="Coca-Cola",
+        size="12pk",
+        categories=["Beverages"],
+        price=PriceSnapshot(regular=11.99, promo=0.0, promo_description=None, checked_at="2026-07-10T00:00:00+00:00"),
+        image_url=None,
+    )
+
+
 # --------------------------------------------------------------------------- #
 #  add
 # --------------------------------------------------------------------------- #
 
 
 def test_add_with_url(runner):
-    """add with a valid URL should parse UPC and add to storage."""
+    """add with a valid URL should parse UPC, fetch product, and add to storage."""
     storage_mock = MagicMock()
 
-    with patch("krogetter.cli.Storage", return_value=storage_mock):
+    with (
+        patch("krogetter.cli.Storage", return_value=storage_mock),
+        patch("krogetter.cli.Tracker.fetch_product_for_item", return_value=_make_product()),
+    ):
         result = runner.invoke(
             main,
             [
@@ -41,6 +58,7 @@ def test_add_with_url(runner):
     storage_mock.add_item.assert_called_once()
     added_item: TrackedItem = storage_mock.add_item.call_args[0][0]
     assert added_item.upc == "0004900004825"
+    assert "Coca-Cola" in added_item.label
     assert added_item.location_id is None
     assert added_item.chain == ""
     assert added_item.zip_code == ""
@@ -50,7 +68,10 @@ def test_add_with_bare_upc(runner):
     """add with a bare 13-digit UPC should work."""
     storage_mock = MagicMock()
 
-    with patch("krogetter.cli.Storage", return_value=storage_mock):
+    with (
+        patch("krogetter.cli.Storage", return_value=storage_mock),
+        patch("krogetter.cli.Tracker.fetch_product_for_item", return_value=_make_product()),
+    ):
         result = runner.invoke(main, ["add", "0004900004825"])
 
     assert result.exit_code == 0
@@ -60,23 +81,22 @@ def test_add_with_bare_upc(runner):
     assert added_item.upc == "0004900004825"
 
 
-def test_add_with_label(runner):
-    """add with --label sets a custom label."""
+def test_add_fetch_fails(runner):
+    """add should error if the product API can't be fetched."""
     storage_mock = MagicMock()
 
-    with patch("krogetter.cli.Storage", return_value=storage_mock):
+    with (
+        patch("krogetter.cli.Storage", return_value=storage_mock),
+        patch("krogetter.cli.Tracker.fetch_product_for_item", return_value=None),
+    ):
         result = runner.invoke(
             main,
-            [
-                "add",
-                "0004900004825",
-                "--label", "Coke Vanilla",
-            ],
+            ["add", "https://www.kingsoopers.com/p/coca-cola/0004900004825"],
         )
 
-    assert result.exit_code == 0
-    added_item = storage_mock.add_item.call_args[0][0]
-    assert added_item.label == "Coke Vanilla"
+    assert result.exit_code != 0
+    assert "Could not fetch" in result.output
+    storage_mock.add_item.assert_not_called()
 
 
 def test_add_duplicate_upc(runner):
@@ -86,7 +106,10 @@ def test_add_duplicate_upc(runner):
         "UPC '0004900004825' is already being tracked"
     )
 
-    with patch("krogetter.cli.Storage", return_value=storage_mock):
+    with (
+        patch("krogetter.cli.Storage", return_value=storage_mock),
+        patch("krogetter.cli.Tracker.fetch_product_for_item", return_value=_make_product()),
+    ):
         result = runner.invoke(main, ["add", "0004900004825"])
 
     assert result.exit_code == 1

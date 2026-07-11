@@ -91,7 +91,6 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
             try:
                 await api.add_item(
                     url=user_input["url"],
-                    label=user_input.get("label"),
                     zip_code=user_input.get("zip_code"),
                     delivery=user_input.get("delivery", False),
                     store_id=user_input.get("store_id"),
@@ -99,6 +98,12 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
             except Exception:
                 errors["base"] = "add_failed"
             else:
+                # Immediately check the price so the item has data
+                try:
+                    upc = user_input["url"].rstrip("/").split("/")[-1]
+                    await api.check_item(upc)
+                except Exception:
+                    pass  # Non-fatal — the next poll will fetch it
                 coordinator = self._get_coordinator()
                 await coordinator.async_request_refresh()
                 return self.async_create_entry(title="", data=dict(self.config_entry.options))
@@ -106,9 +111,6 @@ class KrogetterOptionsFlowHandler(config_entries.OptionsFlow):
         schema = vol.Schema({
             vol.Required("url"): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.URL)
-            ),
-            vol.Optional("label"): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.TEXT)
             ),
             vol.Optional("zip_code"): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.TEXT)
