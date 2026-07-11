@@ -198,6 +198,11 @@ class KrogetterSensor(CoordinatorEntity, SensorEntity):
         if key == "price":
             attrs["promo_price"] = latest.get("promo")
             attrs["current_price"] = latest.get("current_price")
+            attrs["offer_start"] = latest.get("offer_start")
+            attrs["offer_end"] = latest.get("offer_end")
+        elif key == "offer":
+            attrs["offer_start"] = latest.get("offer_start")
+            attrs["offer_end"] = latest.get("offer_end")
         elif key == "effective_unit_price":
             attrs["offer_description"] = latest.get("synthetic_description")
         elif key == "savings":
