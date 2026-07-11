@@ -9,7 +9,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
-from .const import DOMAIN
+from .const import DOMAIN, date_only
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -198,11 +198,11 @@ class KrogetterSensor(CoordinatorEntity, SensorEntity):
         if key == "price":
             attrs["promo_price"] = latest.get("promo")
             attrs["current_price"] = latest.get("current_price")
-            attrs["offer_start"] = latest.get("offer_start")
-            attrs["offer_end"] = latest.get("offer_end")
+            attrs["offer_start"] = date_only(latest.get("offer_start"))
+            attrs["offer_end"] = date_only(latest.get("offer_end"))
         elif key == "offer":
-            attrs["offer_start"] = latest.get("offer_start")
-            attrs["offer_end"] = latest.get("offer_end")
+            attrs["offer_start"] = date_only(latest.get("offer_start"))
+            attrs["offer_end"] = date_only(latest.get("offer_end"))
         elif key == "effective_unit_price":
             attrs["offer_description"] = latest.get("synthetic_description")
         elif key == "savings":
@@ -261,8 +261,8 @@ class KrogetterOfferSensor(CoordinatorEntity, SensorEntity):
             return None
         offer = offers[self._offer_index]
         return {
-            "start": offer.get("start"),
-            "end": offer.get("end"),
+            "start": date_only(offer.get("start")),
+            "end": date_only(offer.get("end")),
             "template": offer.get("template"),
             "checked_at": item["latest"].get("checked_at"),
         }
