@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 
-from krogetter.models import PriceSnapshot, TrackedItem
+from krogetter.models import PriceSnapshot, TrackedItem, Offer
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +148,15 @@ class Storage:
             "fulfillment_price_string": snapshot.fulfillment_price_string,
             "available": snapshot.available,
             "inventory_level": snapshot.inventory_level,
+            "offers": [
+                {
+                    "description": o.description,
+                    "template": o.template,
+                    "start": o.start,
+                    "end": o.end,
+                }
+                for o in snapshot.offers
+            ],
         }
         line = json.dumps(entry, ensure_ascii=False) + "\n"
 

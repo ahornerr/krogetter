@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from krogetter.models import PriceSnapshot, Product
+from krogetter.models import PriceSnapshot, Product, Offer
 from krogetter.url import parse_product_url
 
 logger = logging.getLogger(__name__)
@@ -88,12 +88,26 @@ def _parse_product_data(
     promo_data: dict[str, Any] = store_prices.get("promo", {})
     promo_raw: str | None = promo_data.get("price")
 
-    # Parse offers
-    offers: list[dict[str, Any]] = product_data.get("offers", [])
-    offer: dict[str, Any] = offers[0] if offers else {}
+    # Parse offers — extract ALL offers, not just the first
+    offers_raw: list[dict[str, Any]] = product_data.get("offers", [])
+    all_offers: list[Offer] = []
+    for offer_raw in offers_raw:
+        all_offers.append(Offer(
+            description=offer_raw.get("defaultDescription"),
+            template=offer_raw.get("displayTemplate"),
+            start=(
+                offer_raw.get("start")
+                or offer_raw.get("startDate", {}).get("value")
+            ),
+            end=(
+                offer_raw.get("end")
+                or offer_raw.get("endDate", {}).get("value")
+            ),
+        ))
+    # Keep first-offer fields for backward compatibility with existing computed properties
+    offer: dict[str, Any] = offers_raw[0] if offers_raw else {}
     promo_description: str | None = offer.get("defaultDescription")
     offer_template: str | None = offer.get("displayTemplate")
-    # offer dates — prefer direct "start"/"end", fall back to "startDate"/"endDate" objects
     offer_start: str | None = (
         offer.get("start")
         or offer.get("startDate", {}).get("value")
@@ -163,6 +177,7 @@ def _parse_product_data(
         fulfillment_price_string=fulfillment_price_string,
         available=available,
         inventory_level=inventory_level,
+        offers=all_offers,
     )
 
     return Product(

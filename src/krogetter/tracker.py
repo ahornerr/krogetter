@@ -10,7 +10,7 @@ import httpx
 
 from krogetter.api.kroger_web import fetch_product_data, prepare_session
 from krogetter.detector import ChangeEvent, detect_change
-from krogetter.models import PriceSnapshot, Product, TrackedItem
+from krogetter.models import PriceSnapshot, Product, TrackedItem, Offer
 from krogetter.storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,15 @@ def _snapshot_from_history(entry: dict) -> PriceSnapshot | None:
             fulfillment_price_string=entry.get("fulfillment_price_string"),
             available=entry.get("available", True),  # default True for old entries
             inventory_level=entry.get("inventory_level"),  # None for old entries
+            offers=[
+                Offer(
+                    description=o.get("description"),
+                    template=o.get("template"),
+                    start=o.get("start"),
+                    end=o.get("end"),
+                )
+                for o in entry.get("offers", [])
+            ],
         )
     except (KeyError, ValueError, TypeError) as exc:
         logger.warning("Skipping malformed history entry: %s", exc)

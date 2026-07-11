@@ -22,6 +22,7 @@ from krogetter.server.schemas import (
     ItemCreateRequest,
     ItemResponse,
     ItemWithLatestResponse,
+    OfferResponse,
     SnapshotResponse,
 )
 from krogetter.storage import Storage
@@ -55,6 +56,15 @@ def _snapshot_to_response(snap: PriceSnapshot) -> SnapshotResponse:
         savings=snap.savings,
         savings_percent=snap.savings_percent,
         synthetic_description=snap.synthetic_description,
+        offers=[
+            OfferResponse(
+                description=o.description,
+                template=o.template,
+                start=o.start,
+                end=o.end,
+            )
+            for o in snap.offers
+        ],
     )
 
 
