@@ -127,8 +127,6 @@ def add(
 
     # Use the product description as the label
     label = product.description
-    if product.brand:
-        label = f"{product.brand} {product.description}"
     item.label = label
 
     # Add to storage

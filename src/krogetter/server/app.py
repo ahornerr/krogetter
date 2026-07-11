@@ -192,8 +192,6 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
 
         # Use the product description as the label
         label = product.description
-        if product.brand:
-            label = f"{product.brand} {product.description}"
         item.label = label
 
         # Store the item
