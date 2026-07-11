@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
-from .const import DOMAIN
+from .const import DOMAIN, date_only
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,8 +81,8 @@ class KrogetterOnSaleSensor(CoordinatorEntity, BinarySensorEntity):
             "available": latest.get("available", True),
             "inventory_level": latest.get("inventory_level"),
             "offer_description": latest.get("synthetic_description"),
-            "offer_start": latest.get("offer_start"),
-            "offer_end": latest.get("offer_end"),
+            "offer_start": date_only(latest.get("offer_start")),
+            "offer_end": date_only(latest.get("offer_end")),
             "savings": latest.get("savings"),
             "savings_percent": latest.get("savings_percent"),
             "checked_at": latest.get("checked_at"),
