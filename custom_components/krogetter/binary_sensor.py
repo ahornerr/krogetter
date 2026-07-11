@@ -25,7 +25,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         # Remove entities for items no longer tracked
         removed = set(entities_by_upc) - current_upcs
         for upc in removed:
-            entities_by_upc.pop(upc).async_remove()
+            entity = entities_by_upc.pop(upc)
+            try:
+                entity.async_remove()
+            except Exception:
+                _LOGGER.debug("Entity already removed for UPC %s", upc)
 
         # Add entities for newly tracked items
         for item in coordinator.data or []:

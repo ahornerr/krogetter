@@ -25,6 +25,15 @@ class ItemResponse(BaseModel):
     added_at: str
 
 
+class OfferResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    description: str | None
+    template: str | None
+    start: str | None
+    end: str | None
+
+
 class SnapshotResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,6 +54,7 @@ class SnapshotResponse(BaseModel):
     savings: float | None
     savings_percent: float | None
     synthetic_description: str | None
+    offers: list[OfferResponse] = []
 
 
 class ItemWithLatestResponse(ItemResponse):

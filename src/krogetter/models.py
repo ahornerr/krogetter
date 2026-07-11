@@ -1,7 +1,7 @@
 """Data models for tracked items, prices, and store information."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -21,6 +21,15 @@ _BUY_N_GET_M_PCT_OFF = re.compile(r"Buy (\d+) Get (\d+) (\d+)%\s*Off", re.IGNORE
 
 
 @dataclass
+class Offer:
+    """A single offer/promotion for a product."""
+    description: str | None
+    template: str | None
+    start: str | None
+    end: str | None
+
+
+@dataclass
 class PriceSnapshot:
     regular: float            # regular price, e.g. 11.99
     promo: float              # sale price; 0.0 if not on sale (NOT null — API returns 0)
@@ -32,6 +41,7 @@ class PriceSnapshot:
     fulfillment_price_string: str | None = None  # e.g. "Buy 2 Get 1 Free" from fulfillmentSummaries
     available: bool = True                      # False if product has no pricing at selected store
     inventory_level: str | None = None          # e.g. "HIGH", "MEDIUM", "LOW"; None if unavailable
+    offers: list[Offer] = field(default_factory=list)
 
     @property
     def is_on_sale(self) -> bool:

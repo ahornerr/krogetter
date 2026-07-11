@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import KrogetterAPI
 from .const import DOMAIN, CONF_API_URL, CONF_POLL_INTERVAL, DEFAULT_POLL_INTERVAL
@@ -54,6 +55,39 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for service_name in ("add_item", "remove_item", "check_now"):
                 hass.services.async_remove(DOMAIN, service_name)
     return unload_ok
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device_entry: DeviceEntry
+) -> bool:
+    """Remove a config entry device — also removes the UPC from tracking."""
+    upc = next(
+        (ident[1] for ident in device_entry.identifiers if ident[0] == DOMAIN),
+        None,
+    )
+    if upc is None:
+        _LOGGER.warning("Device %s has no krogetter UPC identifier", device_entry.id)
+        return False
+
+    # Remove the item from the API server so it doesn't reappear on next refresh
+    api: KrogetterAPI | None = (
+        hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("api")
+    )
+    if api:
+        try:
+            await api.remove_item(upc)
+        except Exception:
+            _LOGGER.warning("Failed to remove item %s from API server", upc)
+
+    # Request a coordinator refresh so entities are cleaned up
+    coordinator = (
+        hass.data.get(DOMAIN, {}).get(entry.entry_id, {}).get("coordinator")
+    )
+    if coordinator:
+        await coordinator.async_request_refresh()
+
+    return True
+
 
 async def _async_register_services(hass: HomeAssistant, api: KrogetterAPI, coordinator: KrogetterCoordinator) -> None:
     """Register HA services."""

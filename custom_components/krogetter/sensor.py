@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription, SensorDeviceClass, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
@@ -61,6 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     # Track entities by UPC so we can remove them when items are removed
     entities_by_upc: dict[str, list[KrogetterSensor]] = {}
+    offer_entities_by_upc: dict[str, list[KrogetterOfferSensor]] = {}
 
     def _sync_entities() -> None:
         """Create entities for new items, remove entities for deleted items."""
@@ -70,7 +72,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         removed = set(entities_by_upc) - current_upcs
         for upc in removed:
             for entity in entities_by_upc.pop(upc):
-                entity.async_remove()
+                try:
+                    entity.async_remove()
+                except Exception:
+                    _LOGGER.debug("Entity already removed for UPC %s", upc)
+            # Remove offer entities for this UPC too
+            for entity in offer_entities_by_upc.pop(upc, []):
+                try:
+                    entity.async_remove()
+                except Exception:
+                    _LOGGER.debug("Offer entity already removed for UPC %s", upc)
+            # Clean up the device from the device registry
+            dev_reg = dr.async_get(hass)
+            dev_entry = dev_reg.async_get_device({(DOMAIN, upc)})
+            if dev_entry:
+                dev_reg.async_remove_device(dev_entry.id)
 
         # Add entities for newly tracked items
         for item in coordinator.data or []:
@@ -81,6 +97,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 ]
                 entities_by_upc[upc] = new_entities
                 async_add_entities(new_entities)
+
+        # Sync offer entities for all current items
+        for item in coordinator.data or []:
+            upc = item["upc"]
+            latest = item.get("latest") or {}
+            offers = latest.get("offers", [])
+            existing = offer_entities_by_upc.get(upc, [])
+
+            if len(existing) != len(offers):
+                # Offer count changed — remove all and recreate
+                for entity in existing:
+                    try:
+                        entity.async_remove()
+                    except Exception:
+                        _LOGGER.debug("Offer entity already removed for UPC %s", upc)
+                offer_entities_by_upc[upc] = []
+
+                new_offer_entities = [
+                    KrogetterOfferSensor(coordinator, item, idx)
+                    for idx in range(len(offers))
+                ]
+                offer_entities_by_upc[upc] = new_offer_entities
+                if new_offer_entities:
+                    async_add_entities(new_offer_entities)
 
     # Initial population
     _sync_entities()
@@ -168,3 +208,56 @@ class KrogetterSensor(CoordinatorEntity, SensorEntity):
             attrs["savings_amount"] = latest.get("savings")
             attrs["regular_price"] = latest.get("regular")
         return attrs
+
+
+class KrogetterOfferSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for a single offer/promotion on a tracked product."""
+
+    _attr_icon = "mdi:tag"
+
+    def __init__(self, coordinator, item: dict, offer_index: int) -> None:
+        super().__init__(coordinator)
+        self._upc = item["upc"]
+        self._offer_index = offer_index
+        self._attr_unique_id = f"krogetter_{self._upc}_offer_{offer_index}"
+        self._attr_name = f"{item['label']} Offer {offer_index + 1}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={("krogetter", self._upc)},
+            name=item["label"],
+            manufacturer="Kroger",
+            model=item.get("modality", ""),
+        )
+
+    def _get_item(self) -> dict | None:
+        """Find this item in coordinator data."""
+        for item in self.coordinator.data or []:
+            if item["upc"] == self._upc:
+                return item
+        return None
+
+    @property
+    def native_value(self):
+        item = self._get_item()
+        if not item or not item.get("latest"):
+            return None
+        offers = item["latest"].get("offers", [])
+        if self._offer_index >= len(offers):
+            return None
+        offer = offers[self._offer_index]
+        return offer.get("description") or "Offer"
+
+    @property
+    def extra_state_attributes(self):
+        item = self._get_item()
+        if not item or not item.get("latest"):
+            return None
+        offers = item["latest"].get("offers", [])
+        if self._offer_index >= len(offers):
+            return None
+        offer = offers[self._offer_index]
+        return {
+            "start": offer.get("start"),
+            "end": offer.get("end"),
+            "template": offer.get("template"),
+            "checked_at": item["latest"].get("checked_at"),
+        }
