@@ -81,6 +81,8 @@ class KrogetterOnSaleSensor(CoordinatorEntity, BinarySensorEntity):
             "available": latest.get("available", True),
             "inventory_level": latest.get("inventory_level"),
             "offer_description": latest.get("synthetic_description"),
+            "offer_start": latest.get("offer_start"),
+            "offer_end": latest.get("offer_end"),
             "savings": latest.get("savings"),
             "savings_percent": latest.get("savings_percent"),
             "checked_at": latest.get("checked_at"),
