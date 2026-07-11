@@ -4,8 +4,6 @@ import json
 import pathlib
 from unittest.mock import MagicMock, patch
 
-import httpx
-
 from krogetter.api.kroger_web import (
     _parse_price,
     _parse_product_data,
@@ -21,22 +19,6 @@ def load_fixture() -> dict:
     """Load the product data fixture (from product v2 API response shape)."""
     with open(FIXTURE_PATH) as f:
         return json.load(f)
-
-
-def _mock_httpx_client(response_data: dict | None = None, status_code: int = 200) -> MagicMock:
-    """Create a mock httpx.Client that returns the given response data."""
-    mock_client = MagicMock(spec=httpx.Client)
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    if response_data is not None:
-        mock_response.json.return_value = response_data
-        mock_response.text = json.dumps(response_data)
-    else:
-        mock_response.json.return_value = {}
-        mock_response.text = "{}"
-    mock_client.get.return_value = mock_response
-    mock_client.post.return_value = mock_response
-    return mock_client
 
 
 # ---------------------------------------------------------------------------
@@ -153,15 +135,23 @@ class TestParseProductData:
 
 class TestFetchProduct:
     def test_with_url_extracts_and_parses(self) -> None:
-        """fetch_product warms up Akamai, calls product API, and parses the result."""
+        """fetch_product warms up Akamai, calls product API via page.evaluate(fetch()), and parses the result."""
         fixture = load_fixture()
         url = "https://www.kingsoopers.com/p/coca-cola-vanilla-zero-sugar-fridge-pack-cans-12-fl-oz-12-pack/0004900004825"
 
-        mock_client = _mock_httpx_client({"data": {"products": [fixture]}})
+        mock_page = MagicMock()
+        mock_context = MagicMock()
 
         with (
             patch("invisible_playwright.InvisiblePlaywright") as mock_ip_cls,
-            patch("krogetter.api.kroger_web.prepare_session", return_value=(mock_client, None)),
+            patch(
+                "krogetter.api.kroger_web.prepare_session",
+                return_value=(mock_page, None, mock_context),
+            ),
+            patch(
+                "krogetter.api.kroger_web.fetch_product_data",
+                return_value=_parse_product_data(fixture, "0004900004825"),
+            ) as mock_fetch_data,
         ):
             mock_browser = MagicMock()
             mock_cm = MagicMock()
@@ -182,18 +172,35 @@ class TestFetchProduct:
         mock_ip_cls.assert_called_once_with(headless=True)
         mock_cm.__enter__.assert_called_once()
         mock_cm.__exit__.assert_called_once()
-        # Client was closed
-        mock_client.close.assert_called_once()
 
-    def test_with_provided_browser_does_not_close(self) -> None:
+        # fetch_product_data was called with page (not client)
+        mock_fetch_data.assert_called_once_with(
+            mock_page, "0004900004825", None, "PICKUP"
+        )
+
+        # Page and context were closed by fetch_product
+        mock_page.close.assert_called_once()
+        mock_context.close.assert_called_once()
+
+    def test_with_provided_browser_does_not_close_browser(self) -> None:
         """When a browser is provided, it is NOT closed by fetch_product."""
         fixture = load_fixture()
         url = "https://www.kingsoopers.com/p/test-product/0004900004825"
 
-        mock_client = _mock_httpx_client({"data": {"products": [fixture]}})
+        mock_page = MagicMock()
+        mock_context = MagicMock()
         mock_browser = MagicMock()
 
-        with patch("krogetter.api.kroger_web.prepare_session", return_value=(mock_client, None)):
+        with (
+            patch(
+                "krogetter.api.kroger_web.prepare_session",
+                return_value=(mock_page, None, mock_context),
+            ),
+            patch(
+                "krogetter.api.kroger_web.fetch_product_data",
+                return_value=_parse_product_data(fixture, "0004900004825"),
+            ),
+        ):
             result = fetch_product(url, browser=mock_browser)
 
         assert result is not None
@@ -201,16 +208,24 @@ class TestFetchProduct:
 
         # The provided browser MUST NOT have been closed
         mock_browser.close.assert_not_called()
+        # But page and context SHOULD be closed
+        mock_page.close.assert_called_once()
+        mock_context.close.assert_called_once()
 
     def test_returns_none_when_api_returns_no_products(self) -> None:
         """When the product API returns no products, returns None."""
         url = "https://www.kingsoopers.com/p/missing/0004900004825"
 
-        mock_client = _mock_httpx_client({"data": {"products": []}})
+        mock_page = MagicMock()
+        mock_context = MagicMock()
 
         with (
             patch("invisible_playwright.InvisiblePlaywright"),
-            patch("krogetter.api.kroger_web.prepare_session", return_value=(mock_client, None)),
+            patch(
+                "krogetter.api.kroger_web.prepare_session",
+                return_value=(mock_page, None, mock_context),
+            ),
+            patch("krogetter.api.kroger_web.fetch_product_data", return_value=None),
         ):
             result = fetch_product(url)
 
@@ -222,7 +237,10 @@ class TestFetchProduct:
 
         with (
             patch("invisible_playwright.InvisiblePlaywright"),
-            patch("krogetter.api.kroger_web.prepare_session", side_effect=RuntimeError("Connection timeout")),
+            patch(
+                "krogetter.api.kroger_web.prepare_session",
+                side_effect=RuntimeError("Connection timeout"),
+            ),
         ):
             result = fetch_product(url)
 
@@ -249,48 +267,60 @@ class TestFetchProduct:
 # ---------------------------------------------------------------------------
 
 class TestPrepareSession:
-    def test_returns_client_and_default_laf_headers(self) -> None:
-        """prepare_session warms up Akamai and returns an httpx client with default LAF headers."""
+    def test_returns_page_and_context(self) -> None:
+        """prepare_session warms up Akamai, navigates to robots.txt, and
+        returns (page, laf_headers, context). The caller is responsible for
+        closing page and context."""
         mock_browser = MagicMock()
         mock_context = MagicMock()
         mock_page = MagicMock()
 
         mock_browser.new_context.return_value = mock_context
         mock_context.new_page.return_value = mock_page
-        mock_context.cookies.return_value = []
-        mock_page.evaluate.return_value = "Mozilla/5.0 test"
 
         with patch(
             "krogetter.api.kroger_web._get_default_store_laf",
             return_value={"x-laf-object": "[]"},
         ):
-            client, laf_headers = prepare_session(
+            page, laf_headers, context = prepare_session(
                 mock_browser, "https://www.kingsoopers.com/"
             )
 
-        assert isinstance(client, httpx.Client)
+        assert page is mock_page
+        assert context is mock_context
         assert laf_headers is not None  # default store LAF headers
 
-        # Homepage loaded (no robots.txt anymore)
-        mock_page.goto.assert_called_once_with(
+        # Homepage loaded
+        mock_page.goto.assert_any_call(
             "https://www.kingsoopers.com/",
             wait_until="domcontentloaded",
             timeout=30000,
         )
-        # Page and context were closed
-        mock_page.close.assert_called_once()
-        mock_context.close.assert_called_once()
+        # Robots.txt loaded to stabilize execution context
+        mock_page.goto.assert_any_call(
+            "https://www.kingsoopers.com/robots.txt",
+            wait_until="domcontentloaded",
+            timeout=15000,
+        )
 
-        client.close()
+        # Page and context are NOT closed — caller is responsible
+        mock_page.close.assert_not_called()
+        mock_context.close.assert_not_called()
 
 
 class TestFetchProductData:
     def test_fetches_and_parses_product(self) -> None:
-        """fetch_product_data calls the API and parses the result."""
+        """fetch_product_data calls page.evaluate(fetch()) and parses the result."""
         fixture = load_fixture()
-        mock_client = _mock_httpx_client({"data": {"products": [fixture]}})
+        mock_page = MagicMock()
 
-        result = fetch_product_data(mock_client, "0004900004825")
+        # Simulate the page.evaluate() returning a {status, body} dict
+        mock_page.evaluate.return_value = {
+            "status": 200,
+            "body": json.dumps({"data": {"products": [fixture]}}),
+        }
+
+        result = fetch_product_data(mock_page, "0004900004825")
 
         assert result is not None
         assert result.upc == "0004900004825"
@@ -299,16 +329,27 @@ class TestFetchProductData:
         assert result.price.available is True
         assert result.price.inventory_level == "HIGH"
 
+        # page.evaluate was called (with appropriate script)
+        mock_page.evaluate.assert_called()
+
     def test_returns_none_on_api_failure(self) -> None:
         """Returns None when the API returns an error."""
-        mock_client = _mock_httpx_client(status_code=400)
+        mock_page = MagicMock()
+        mock_page.evaluate.return_value = {
+            "status": 400,
+            "body": "{}",
+        }
 
-        result = fetch_product_data(mock_client, "0004900004825")
+        result = fetch_product_data(mock_page, "0004900004825")
         assert result is None
 
     def test_returns_none_when_no_products(self) -> None:
         """Returns None when the API returns an empty products list."""
-        mock_client = _mock_httpx_client({"data": {"products": []}})
+        mock_page = MagicMock()
+        mock_page.evaluate.return_value = {
+            "status": 200,
+            "body": json.dumps({"data": {"products": []}}),
+        }
 
-        result = fetch_product_data(mock_client, "0004900004825")
+        result = fetch_product_data(mock_page, "0004900004825")
         assert result is None
