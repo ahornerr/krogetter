@@ -11,7 +11,7 @@ version = "0.1.0"
 description = "Track sale prices on Kroger family store websites."
 requires-python = ">=3.11"
 dependencies = [
-    "invisible-playwright @ git+https://github.com/feder-cr/invisible_playwright.git",
+    "invisible-playwright>=0.4.9",
     "playwright>=1.40,<1.61",
     "click>=8.1",
     "fastapi>=0.115.0",
