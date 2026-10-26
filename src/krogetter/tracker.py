@@ -2,9 +2,9 @@
 
 import logging
 import threading
-import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -12,10 +12,27 @@ import httpx
 
 from krogetter.api.kroger_web import fetch_product_data, prepare_session
 from krogetter.detector import ChangeEvent, detect_change
-from krogetter.models import PriceSnapshot, Product, TrackedItem, Offer
+from krogetter.models import Offer, PriceSnapshot, Product, TrackedItem
 from krogetter.storage import Storage
 
 logger = logging.getLogger(__name__)
+
+
+class TrackerStoppedError(RuntimeError):
+    """Raised when a new public tracker operation starts after stop was requested."""
+
+
+@dataclass(frozen=True)
+class CheckSummary:
+    """Counts exclude skipped work; attempted is succeeded plus failed."""
+    attempted: int = 0
+    succeeded: int = 0
+    failed_upcs: tuple[str, ...] = ()
+    interrupted: bool = False
+
+    @property
+    def failed(self) -> int:
+        return len(self.failed_upcs)
 
 
 def _snapshot_from_history(entry: dict) -> PriceSnapshot | None:
@@ -77,6 +94,10 @@ class Tracker:
             max_workers=1, thread_name_prefix="krogetter-browser"
         )
         self._sessions_lock = threading.Lock()
+        self.operation_lock = threading.RLock()
+        self._stop_event = threading.Event()
+        self._closed = False
+        self.last_check_summary = CheckSummary()
 
     def _get_browser(self) -> Any:
         """Lazily initialize a shared browser instance."""
@@ -99,6 +120,7 @@ class Tracker:
             force_refresh: If True, close the old client and create a new one
                           (used when API calls fail with 403/429).
         """
+        self._ensure_open()
         with self._sessions_lock:
             if force_refresh and key in self._sessions:
                 old_client, _ = self._sessions.pop(key)
@@ -153,6 +175,13 @@ class Tracker:
         return (client, laf_headers)
 
     def check_once(self) -> list[tuple[TrackedItem, list[ChangeEvent]]]:
+        """Check all tracked items and return only items with detected changes."""
+        with self.operation_lock:
+            self._ensure_open()
+            self._ensure_running()
+            return self._check_once()
+
+    def _check_once(self) -> list[tuple[TrackedItem, list[ChangeEvent]]]:
         """Check all tracked items once.
 
         Groups items by store config and reuses cached sessions. Only
@@ -163,6 +192,7 @@ class Tracker:
         items = self._storage.load_items()
         if not items:
             logger.info("No tracked items to check")
+            self.last_check_summary = CheckSummary()
             return []
 
         # Group items by store config
@@ -171,7 +201,13 @@ class Tracker:
             groups[_store_key(item)].append(item)
 
         results: list[tuple[TrackedItem, list[ChangeEvent]]] = []
+        attempted = succeeded = 0
+        failed_upcs: list[str] = []
+        interrupted = False
         for key, group_items in groups.items():
+            if self._stop_event.is_set():
+                interrupted = True
+                break
             homepage, zip_code, modality, store_id = key
             logger.info(
                 "Checking %d item(s) for %s (zip=%s, modality=%s, store=%s)",
@@ -180,22 +216,36 @@ class Tracker:
 
             session = self._get_session(key)
             if session is None:
+                attempted += len(group_items)
+                failed_upcs.extend(item.upc for item in group_items)
                 continue
-
-            client, laf_headers = session
             for item in group_items:
+                if self._stop_event.is_set():
+                    interrupted = True
+                    break
+                attempted += 1
                 try:
-                    changes = self._check_item_with_session(
-                        item, client, laf_headers, modality, key
-                    )
+                    session = self._get_session(key)
+                    if session is None:
+                        failed_upcs.append(item.upc)
+                        continue
+                    changes, ok = self._check_item_outcome(item, *session, modality, key)
+                    if ok:
+                        succeeded += 1
+                    else:
+                        failed_upcs.append(item.upc)
                     if changes:
                         results.append((item, changes))
                 except Exception:
+                    failed_upcs.append(item.upc)
                     logger.exception(
                         "Unexpected error checking item %s (%s)",
                         item.upc, item.label,
                     )
 
+        self.last_check_summary = CheckSummary(
+            attempted, succeeded, tuple(failed_upcs), interrupted
+        )
         return results
 
     def _check_item_with_session(
@@ -207,6 +257,13 @@ class Tracker:
         If the API returns 403/429 (cookies expired), refreshes the session
         and retries once.
         """
+        changes, _ = self._check_item_outcome(item, client, laf_headers, modality, session_key)
+        return changes
+
+    def _check_item_outcome(
+        self, item: TrackedItem, client: httpx.Client, laf_headers: dict[str, str] | None,
+        modality: str, session_key: tuple[str, str, str, str | None] | None = None,
+    ) -> tuple[list[ChangeEvent], bool]:
         try:
             product = fetch_product_data(client, item.upc, laf_headers, modality)
         except Exception as exc:
@@ -215,16 +272,16 @@ class Tracker:
                 logger.info("Session expired for %s, refreshing...", item.upc)
                 session = self._get_session(session_key, force_refresh=True)
                 if session is None:
-                    return []
+                    return [], False
                 client, laf_headers = session
                 try:
                     product = fetch_product_data(client, item.upc, laf_headers, modality)
                 except Exception as exc2:
                     logger.warning("Web fetch failed for %s (%s): %s", item.upc, item.label, exc2)
-                    return []
+                    return [], False
             else:
                 logger.warning("Web fetch failed for %s (%s): %s", item.upc, item.label, exc)
-                return []
+                return [], False
 
         if product is None:
             # Product API returned non-200 — might be expired cookies
@@ -240,11 +297,11 @@ class Tracker:
 
         if product is None:
             logger.info("Could not fetch product for %s (%s)", item.upc, item.label)
-            return []
+            return [], False
 
         if product.price is None:
             logger.info("Product %s (%s) has no price data", item.upc, item.label)
-            return []
+            return [], False
 
         current = product.price
 
@@ -254,7 +311,11 @@ class Tracker:
             last_snapshot = _snapshot_from_history(history[0])
 
         changes = detect_change(last_snapshot, current)
-        self._storage.append_history(item.upc, current)
+        try:
+            self._storage.append_history(item.upc, current)
+        except OSError:
+            logger.warning("Failed to persist history for %s", item.upc, exc_info=True)
+            return [], False
 
         if changes:
             for change in changes:
@@ -279,7 +340,7 @@ class Tracker:
                         change.old_value, change.new_value,
                     )
 
-        return changes
+        return changes, True
 
     def fetch_product_for_item(self, item: TrackedItem) -> Product | None:
         """Fetch product data for a new item without storing it.
@@ -287,6 +348,12 @@ class Tracker:
         Used by the server's create_item endpoint to get the product
         description and initial price before storing the item.
         """
+        with self.operation_lock:
+            self._ensure_open()
+            self._ensure_running()
+            return self._fetch_product_for_item(item)
+
+    def _fetch_product_for_item(self, item: TrackedItem) -> Product | None:
         key = _store_key(item)
         session = self._get_session(key)
         if session is None:
@@ -318,66 +385,120 @@ class Tracker:
         Uses cached sessions when available. For batch checking, use
         check_once() instead.
         """
-        key = _store_key(item)
-        session = self._get_session(key)
-        if session is None:
-            return []
-
-        client, laf_headers = session
-        return self._check_item_with_session(item, client, laf_headers, item.modality, key)
+        with self.operation_lock:
+            self._ensure_open()
+            self._ensure_running()
+            try:
+                key = _store_key(item)
+                session = self._get_session(key)
+                if session is None:
+                    self.last_check_summary = CheckSummary(1, 0, (item.upc,))
+                    return []
+                changes, ok = self._check_item_outcome(item, *session, item.modality, key)
+                self.last_check_summary = CheckSummary(1, int(ok), () if ok else (item.upc,))
+                return changes
+            except Exception:
+                self.last_check_summary = CheckSummary(1, 0, (item.upc,))
+                raise
 
     def run(self, interval_seconds: int = 3600) -> None:
-        """Run the polling loop forever (until interrupted)."""
+        """Poll until stopped; a stop during a cycle drains only its active item."""
         logger.info("Starting tracker polling loop (interval=%ds)", interval_seconds)
         try:
-            while True:
+            while not self._stop_event.is_set():
+                summary = None
                 try:
                     logger.info("Checking all tracked items...")
-                    results = self.check_once()
+                    with self.operation_lock:
+                        results = self.check_once()
+                        summary = self.last_check_summary
+                    logger.info(
+                        "Check cycle: attempted=%d succeeded=%d failed=%d",
+                        summary.attempted,
+                        summary.succeeded,
+                        summary.failed,
+                    )
+                    if summary.failed:
+                        logger.warning(
+                            "Check cycle failed for UPCs: %s",
+                            ", ".join(summary.failed_upcs),
+                        )
                     if results:
                         logger.info("Found %d items with changes", len(results))
-                    else:
+                    elif not summary.failed and not summary.interrupted:
                         logger.info("No changes detected in this cycle")
+                except TrackerStoppedError:
+                    break
                 except Exception:
                     logger.exception("Unexpected error in polling cycle")
-                logger.info("Sleeping for %d seconds...", interval_seconds)
-                time.sleep(interval_seconds)
+                if summary is not None and summary.interrupted:
+                    logger.warning(
+                        "Check cycle interrupted: attempted=%d succeeded=%d failed=%d",
+                        summary.attempted,
+                        summary.succeeded,
+                        summary.failed,
+                    )
+                    break
+                if self._stop_event.is_set():
+                    break
+                if self._stop_event.wait(interval_seconds):
+                    break
         except KeyboardInterrupt:
             logger.info("Tracker stopped by user")
         finally:
-            self._cleanup()
+            self.close()
+
+    def stop(self) -> None:
+        """Request prompt polling-loop shutdown without waiting for active work."""
+        self._stop_event.set()
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("Tracker is closed")
+
+    def _ensure_running(self) -> None:
+        if self._stop_event.is_set():
+            raise TrackerStoppedError("Tracker is stopping")
+
+    def close(self) -> None:
+        """Stop and drain operations, then close sessions/browser exactly once."""
+        self.stop()
+        with self.operation_lock:
+            if self._closed:
+                return
+            self._closed = True
+            with self._sessions_lock:
+                for client, _ in self._sessions.values():
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                self._sessions.clear()
+
+            def _close_browser() -> None:
+                if self._browser is not None:
+                    try:
+                        self._browser_cm.__exit__(None, None, None)
+                    except Exception:
+                        logger.debug("Error closing browser", exc_info=True)
+                    self._browser = None
+                    self._browser_cm = None
+
+            try:
+                self._browser_executor.submit(_close_browser).result(timeout=10)
+            except RuntimeError:
+                pass
+            except Exception:
+                logger.debug("Browser cleanup timed out or failed")
+            self._browser_executor.shutdown(wait=True)
 
     def _cleanup(self) -> None:
-        """Close all cached sessions and the browser."""
-        with self._sessions_lock:
-            for client, _ in self._sessions.values():
-                try:
-                    client.close()
-                except Exception:
-                    pass
-            self._sessions.clear()
-
-        # The browser was created on the executor thread; close it there too
-        # to avoid the same greenlet thread-switch error on shutdown.
-        def _close_browser() -> None:
-            if self._browser is not None:
-                try:
-                    self._browser_cm.__exit__(None, None, None)
-                except Exception:
-                    logger.debug("Error closing browser", exc_info=True)
-                self._browser = None
-                self._browser_cm = None
-
-        try:
-            self._browser_executor.submit(_close_browser).result(timeout=10)
-        except Exception:
-            logger.debug("Browser cleanup timed out or failed")
-        self._browser_executor.shutdown(wait=False)
+        self.close()
 
     # Backwards compat
     def _cleanup_browser(self) -> None:
         """Close the shared browser if one was opened."""
-        self._cleanup()
+        self.close()
 
 
 def _is_auth_error(exc: Exception) -> bool:

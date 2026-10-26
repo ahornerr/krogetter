@@ -264,51 +264,64 @@ def check(ctx: click.Context, url_or_upc: str | None) -> None:
     config = _get_config(ctx)
     storage = Storage(config.data_dir)
     tracker = Tracker(storage=storage)
-
-    if url_or_upc is not None:
-        # Check a single item
-        try:
-            upc = extract_upc_or_passthrough(url_or_upc)
-        except ValueError as exc:
-            _error(str(exc))
-
-        items = storage.load_items()
-        matching = [item for item in items if item.upc == upc]
-        if not matching:
-            _error(f"No tracked item found with UPC: {upc}")
-
-        item = matching[0]
-        changes = tracker.check_item(item)
-
-        if changes:
-            click.echo(f"Changes for {item.label} ({item.upc}):")
-            for change in changes:
-                click.echo(
-                    f"  {change.field}: {change.old_value} -> {change.new_value}"
-                )
-                if change.is_new_sale:
-                    click.echo("    (New sale!)")
-                elif change.is_sale_ended:
-                    click.echo("    (Sale ended)")
-        else:
-            click.echo(f"No changes detected for {item.label} ({item.upc})")
-    else:
-        # Check all items
-        results = tracker.check_once()
-        if results:
-            click.echo("Changes detected:")
-            for item, changes in results:
-                click.echo(f"\n  {item.label} ({item.upc}):")
+    try:
+        if url_or_upc is not None:
+            try:
+                upc = extract_upc_or_passthrough(url_or_upc)
+            except ValueError as exc:
+                _error(str(exc))
+            items = storage.load_items()
+            matching = [item for item in items if item.upc == upc]
+            if not matching:
+                _error(f"No tracked item found with UPC: {upc}")
+            item = matching[0]
+            with tracker.operation_lock:
+                changes = tracker.check_item(item)
+                summary = tracker.last_check_summary
+            failed = summary.failed
+            if changes:
+                click.echo(f"Changes for {item.label} ({item.upc}):")
                 for change in changes:
-                    click.echo(
-                        f"    {change.field}: {change.old_value} -> {change.new_value}"
-                    )
+                    click.echo(f"  {change.field}: {change.old_value} -> {change.new_value}")
                     if change.is_new_sale:
-                        click.echo("      (New sale!)")
+                        click.echo("    (New sale!)")
                     elif change.is_sale_ended:
-                        click.echo("      (Sale ended)")
+                        click.echo("    (Sale ended)")
+            elif not failed and not summary.interrupted:
+                click.echo(f"No changes detected for {item.label} ({item.upc})")
         else:
-            click.echo("No changes detected for any tracked item.")
+            with tracker.operation_lock:
+                results = tracker.check_once()
+                summary = tracker.last_check_summary
+            failed = summary.failed
+            if results:
+                click.echo("Changes detected:")
+                for item, changes in results:
+                    click.echo(f"\n  {item.label} ({item.upc}):")
+                    for change in changes:
+                        click.echo(f"    {change.field}: {change.old_value} -> {change.new_value}")
+                        if change.is_new_sale:
+                            click.echo("      (New sale!)")
+                        elif change.is_sale_ended:
+                            click.echo("      (Sale ended)")
+            elif not failed and not summary.interrupted:
+                click.echo("No changes detected for any tracked item.")
+        if failed:
+            click.echo(
+                f"Price check failed: attempted {summary.attempted}, "
+                f"succeeded {summary.succeeded}, failed {failed}.",
+                err=True,
+            )
+            raise click.ClickException("One or more price checks failed")
+        if summary.interrupted:
+            click.echo(
+                f"Price check interrupted: attempted {summary.attempted}, "
+                f"succeeded {summary.succeeded}, failed {summary.failed}.",
+                err=True,
+            )
+            raise click.ClickException("Price check was interrupted")
+    finally:
+        tracker.close()
 
 
 @main.command()

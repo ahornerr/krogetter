@@ -5,6 +5,7 @@ import pathlib
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from krogetter.api.kroger_web import (
     _parse_price,
@@ -257,8 +258,15 @@ class TestPrepareSession:
 
         mock_browser.new_context.return_value = mock_context
         mock_context.new_page.return_value = mock_page
-        mock_context.cookies.return_value = []
-        mock_page.evaluate.return_value = "Mozilla/5.0 test"
+        mock_context.cookies.return_value = [
+            {"name": "session", "value": "abc", "domain": ".kingsoopers.com", "path": "/"}
+        ]
+        mock_request = MagicMock()
+        mock_request.all_headers.return_value = {"user-agent": "Mozilla/5.0 test"}
+        mock_response = MagicMock()
+        mock_response.request = mock_request
+        mock_page.goto.return_value = mock_response
+        mock_page.evaluate.side_effect = RuntimeError("CSP blocked evaluation")
 
         with patch(
             "krogetter.api.kroger_web._get_default_store_laf",
@@ -270,6 +278,10 @@ class TestPrepareSession:
 
         assert isinstance(client, httpx.Client)
         assert laf_headers is not None  # default store LAF headers
+        assert client.headers["user-agent"] == "Mozilla/5.0 test"
+        assert client.headers["referer"] == "https://www.kingsoopers.com/"
+        assert client.cookies.get("session") == "abc"
+        mock_page.evaluate.assert_not_called()
 
         # Homepage loaded (no robots.txt anymore)
         mock_page.goto.assert_called_once_with(
@@ -282,6 +294,30 @@ class TestPrepareSession:
         mock_context.close.assert_called_once()
 
         client.close()
+
+    def test_missing_navigation_response_closes_browser_and_does_not_create_client(self) -> None:
+        self._assert_navigation_failure(None, "no response")
+
+    def test_missing_user_agent_closes_browser_and_does_not_create_client(self) -> None:
+        response = MagicMock()
+        response.request.all_headers.return_value = {}
+        self._assert_navigation_failure(response, "user-agent")
+
+    def _assert_navigation_failure(self, response: object, message: str) -> None:
+        mock_browser = MagicMock()
+        mock_context = MagicMock()
+        mock_page = MagicMock()
+        mock_browser.new_context.return_value = mock_context
+        mock_context.new_page.return_value = mock_page
+        mock_page.goto.return_value = response
+
+        with patch("krogetter.api.kroger_web.httpx.Client") as client_factory:
+            with pytest.raises(RuntimeError, match=message):
+                prepare_session(mock_browser, "https://www.kingsoopers.com/")
+
+        client_factory.assert_not_called()
+        mock_page.close.assert_called_once()
+        mock_context.close.assert_called_once()
 
 
 class TestFetchProductData:

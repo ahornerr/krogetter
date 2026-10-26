@@ -5,10 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from krogetter.models import TrackedItem
 from krogetter.server.app import create_app
+from krogetter.storage import Storage
+from krogetter.tracker import Tracker, TrackerStoppedError
 
 
 @pytest.fixture
@@ -357,3 +361,184 @@ class TestCheck:
         assert len(data) == 1
         assert data[0]["upc"] == "0004900004825"
         assert len(data[0]["changes"]) == 1
+
+    def test_single_failed_fetch_does_not_return_old_history(self, data_dir: Path) -> None:
+        storage = Storage(data_dir)
+        item = TrackedItem(
+            url="https://www.kingsoopers.com/p/coke/0004900004825",
+            upc="0004900004825",
+            label="Old",
+            added_at="2026-01-01",
+        )
+        storage.add_item(item)
+        storage.append_history(
+            item.upc,
+            PriceSnapshot(
+                regular=12.0,
+                promo=0.0,
+                promo_description=None,
+                checked_at="2026-01-01T00:00:00+00:00",
+            ),
+        )
+        app = create_app(data_dir, 99999)
+
+        session = httpx.Client()
+        with (
+            patch("krogetter.server.app._start_polling_thread", return_value=None),
+            patch.object(Tracker, "_get_browser", return_value=object()),
+            patch("krogetter.tracker.prepare_session", return_value=(session, None)),
+            patch("krogetter.tracker.fetch_product_data", return_value=None),
+            TestClient(app) as test_client,
+        ):
+            response = test_client.post(f"/api/items/{item.upc}/check")
+        assert response.status_code == 502
+        assert response.json()["detail"]["failed_upcs"] == [item.upc]
+        assert Storage(data_dir).load_history(item.upc)[0]["regular"] == 12.0
+
+    def test_batch_partial_failure_reports_counts(self, data_dir: Path) -> None:
+        storage = Storage(data_dir)
+        upcs = ("0004900004825", "0004900004832")
+        items = [
+            TrackedItem(
+                url=f"https://www.kingsoopers.com/p/coke/{upc}",
+                upc=upc,
+                label=upc,
+                added_at="2026-01-01",
+            )
+            for upc in upcs
+        ]
+        for item in items:
+            storage.add_item(item)
+            storage.append_history(
+                item.upc,
+                PriceSnapshot(
+                    regular=12.0,
+                    promo=0.0,
+                    promo_description=None,
+                    checked_at="2026-01-01T00:00:00+00:00",
+                ),
+            )
+        app = create_app(data_dir, 99999)
+
+        session = httpx.Client()
+        successful = _make_product(items[0].upc)
+        successful.price = PriceSnapshot(
+            regular=9.0, promo=0.0, promo_description=None, checked_at="2026-07-10T00:00:00+00:00"
+        )
+        with (
+            patch("krogetter.server.app._start_polling_thread", return_value=None),
+            patch.object(Tracker, "_get_browser", return_value=object()),
+            patch("krogetter.tracker.prepare_session", return_value=(session, None)),
+            patch("krogetter.tracker.fetch_product_data", side_effect=[successful, None]),
+            TestClient(app) as test_client,
+        ):
+            response = test_client.post("/api/check")
+        assert response.status_code == 502
+        assert response.json()["detail"]["attempted"] == 2
+        assert response.json()["detail"]["succeeded"] == 1
+        assert response.json()["detail"]["failed_upcs"] == [items[1].upc]
+        assert len(Storage(data_dir).load_history(items[0].upc)) == 2
+        assert Storage(data_dir).load_history(items[0].upc)[0]["regular"] == 9.0
+        assert Storage(data_dir).load_history(items[1].upc)[0]["regular"] == 12.0
+
+    def test_batch_total_failure_is_502(self, data_dir: Path) -> None:
+        storage = Storage(data_dir)
+        item = TrackedItem(
+            url="https://www.kingsoopers.com/p/coke/0004900004825",
+            upc="0004900004825",
+            label="Coke",
+            added_at="2026-01-01",
+        )
+        storage.add_item(item)
+        storage.append_history(
+            item.upc,
+            PriceSnapshot(
+                regular=12.0,
+                promo=0.0,
+                promo_description=None,
+                checked_at="2026-01-01T00:00:00+00:00",
+            ),
+        )
+        session = httpx.Client()
+        with (
+            patch("krogetter.server.app._start_polling_thread", return_value=None),
+            patch.object(Tracker, "_get_browser", return_value=object()),
+            patch("krogetter.tracker.prepare_session", return_value=(session, None)),
+            patch("krogetter.tracker.fetch_product_data", return_value=None),
+            TestClient(create_app(data_dir)) as test_client,
+        ):
+            response = test_client.post("/api/check")
+        assert response.status_code == 502
+        assert response.json()["detail"]["failed_upcs"] == [item.upc]
+        assert Storage(data_dir).load_history(item.upc)[0]["regular"] == 12.0
+
+    def test_unchanged_real_check_returns_200(self, data_dir: Path) -> None:
+        storage = Storage(data_dir)
+        product = _make_product()
+        item = TrackedItem(
+            url="https://www.kingsoopers.com/p/coke/0004900004825",
+            upc=product.upc,
+            label=product.description,
+            added_at="2026-01-01",
+        )
+        storage.add_item(item)
+        storage.append_history(product.upc, product.price)
+        session = httpx.Client()
+        with (
+            patch("krogetter.server.app._start_polling_thread", return_value=None),
+            patch.object(Tracker, "_get_browser", return_value=object()),
+            patch("krogetter.tracker.prepare_session", return_value=(session, None)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+            TestClient(create_app(data_dir)) as test_client,
+        ):
+            response = test_client.post(f"/api/items/{product.upc}/check")
+        assert response.status_code == 200
+
+    def test_history_write_failure_returns_502(self, data_dir: Path) -> None:
+        storage = Storage(data_dir)
+        item = TrackedItem(
+            url="https://www.kingsoopers.com/p/coke/0004900004825",
+            upc="0004900004825",
+            label="Coke",
+            added_at="2026-01-01",
+        )
+        storage.add_item(item)
+        storage.append_history(
+            item.upc,
+            PriceSnapshot(
+                regular=12.0,
+                promo=0.0,
+                promo_description=None,
+                checked_at="2026-01-01T00:00:00+00:00",
+            ),
+        )
+        product = _make_product()
+        session = httpx.Client()
+        with (
+            patch("krogetter.server.app._start_polling_thread", return_value=None),
+            patch.object(Tracker, "_get_browser", return_value=object()),
+            patch("krogetter.tracker.prepare_session", return_value=(session, None)),
+            patch("krogetter.tracker.fetch_product_data", return_value=product),
+            patch.object(Storage, "append_history", side_effect=OSError("disk unavailable")),
+            TestClient(create_app(data_dir)) as test_client,
+        ):
+            response = test_client.post(f"/api/items/{item.upc}/check")
+        assert response.status_code == 502
+        assert Storage(data_dir).load_history(item.upc)[0]["regular"] == 12.0
+
+    def test_stopped_tracker_returns_503(self, data_dir: Path) -> None:
+        storage = Storage(data_dir)
+        item = TrackedItem(
+            url="https://www.kingsoopers.com/p/coke/0004900004825",
+            upc="0004900004825",
+            label="Coke",
+            added_at="2026-01-01",
+        )
+        storage.add_item(item)
+        with (
+            patch("krogetter.server.app._start_polling_thread", return_value=None),
+            patch.object(Tracker, "check_item", side_effect=TrackerStoppedError),
+            TestClient(create_app(data_dir)) as test_client,
+        ):
+            response = test_client.post(f"/api/items/{item.upc}/check")
+        assert response.status_code == 503

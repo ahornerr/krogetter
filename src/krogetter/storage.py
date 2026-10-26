@@ -135,6 +135,9 @@ class Storage:
 
         Each line: {"upc": "...", "regular": ..., "promo": ...,
                      "promo_description": ..., "checked_at": "..."}
+
+        Raises:
+            OSError: If the history entry cannot be written.
         """
         entry = {
             "upc": upc,
@@ -167,6 +170,7 @@ class Storage:
                 fh.write(line)
         except OSError as exc:
             logger.error("Failed to append history for UPC %s: %s", upc, exc)
+            raise
 
     def load_history(self, upc: str, limit: int = 100) -> list[dict]:
         """Load recent history entries for a UPC. Returns most recent first.

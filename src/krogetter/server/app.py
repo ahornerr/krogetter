@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from collections.abc import AsyncIterator
@@ -26,10 +27,43 @@ from krogetter.server.schemas import (
     SnapshotResponse,
 )
 from krogetter.storage import Storage
-from krogetter.tracker import Tracker, _snapshot_from_history
+from krogetter.tracker import (
+    CheckSummary,
+    Tracker,
+    TrackerStoppedError,
+    _snapshot_from_history,
+)
 from krogetter.url import extract_upc_or_passthrough
 
 logger = logging.getLogger(__name__)
+
+
+def _check_failure(summary: CheckSummary) -> HTTPException:
+    return HTTPException(
+        status_code=502,
+        detail={
+            "message": (
+                "Price check failed for one or more items; existing history was not refreshed "
+                "for failed items."
+            ),
+            "attempted": summary.attempted,
+            "succeeded": summary.succeeded,
+            "failed_upcs": list(summary.failed_upcs),
+        },
+    )
+
+
+def _check_interrupted(summary: CheckSummary) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "message": "Price check was interrupted before all items could be checked.",
+            "attempted": summary.attempted,
+            "succeeded": summary.succeeded,
+            "failed_upcs": list(summary.failed_upcs),
+            "interrupted": True,
+        },
+    )
 
 # ------------------------------------------------------------------ #
 #  Helper functions
@@ -132,7 +166,6 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
     data_dir = Path(data_dir)
     storage = Storage(data_dir)
     tracker = Tracker(storage=storage)
-    lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -140,7 +173,11 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
         try:
             yield
         finally:
-            tracker._cleanup_browser()
+            tracker.stop()
+            polling_thread = getattr(app.state, "polling_thread", None)
+            if polling_thread is not None:
+                await asyncio.to_thread(polling_thread.join)
+            await asyncio.to_thread(tracker.close)
 
     app = FastAPI(title="krogetter", version="0.1.0", lifespan=lifespan)
 
@@ -190,7 +227,7 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
         )
 
         # Fetch product from API to get the real label and initial price
-        with lock:
+        with tracker.operation_lock:
             product = tracker.fetch_product_for_item(item)
 
         if product is None:
@@ -232,8 +269,19 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
 
         item = matching[0]
 
-        with lock:
-            changes = tracker.check_item(item)
+        with tracker.operation_lock:
+            try:
+                changes = tracker.check_item(item)
+            except TrackerStoppedError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Price tracker is stopping; retry the check later.",
+                ) from exc
+            summary = tracker.last_check_summary
+        if summary.interrupted:
+            raise _check_interrupted(summary)
+        if summary.failed > 0:
+            raise _check_failure(summary)
 
         # Fetch latest history entry after check
         history = storage.load_history(upc, limit=1)
@@ -251,8 +299,19 @@ def create_app(data_dir: str | Path, poll_interval: int = 3600) -> FastAPI:
 
     @app.post("/api/check", response_model=list[CheckResultResponse])
     def check_all() -> list[dict[str, Any]]:
-        with lock:
-            results = tracker.check_once()
+        with tracker.operation_lock:
+            try:
+                results = tracker.check_once()
+            except TrackerStoppedError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Price tracker is stopping; retry the check later.",
+                ) from exc
+            summary = tracker.last_check_summary
+        if summary.interrupted:
+            raise _check_interrupted(summary)
+        if summary.failed > 0:
+            raise _check_failure(summary)
 
         output: list[dict[str, Any]] = []
         for item, changes in results:
