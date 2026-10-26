@@ -1,8 +1,12 @@
 """Tests for JSON/JSONL storage."""
 
+import builtins
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 from krogetter.models import PriceSnapshot, TrackedItem
 from krogetter.storage import Storage
@@ -173,6 +177,22 @@ class TestRemoveItem:
 
 class TestAppendAndLoadHistory:
     """Tests for append_history and load_history."""
+
+    def test_append_oserror_is_propagated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = Storage(tmp)
+            real_open = builtins.open
+
+            def failing_append(file, mode="r", *args, **kwargs):
+                if mode == "a":
+                    raise OSError("disk full")
+                return real_open(file, mode, *args, **kwargs)
+
+            with (
+                patch("builtins.open", side_effect=failing_append),
+                pytest.raises(OSError, match="disk full"),
+            ):
+                storage.append_history("upc", _make_snapshot())
 
     def test_append_then_load_returns_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

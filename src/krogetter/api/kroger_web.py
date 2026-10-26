@@ -353,12 +353,18 @@ def prepare_session(
     context = browser.new_context()
     page = context.new_page()
     try:
-        page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
+        response = page.goto(homepage_url, wait_until="domcontentloaded", timeout=30000)
+        if response is None:
+            raise RuntimeError(
+                "Homepage navigation returned no response; cannot determine browser user-agent"
+            )
         page.wait_for_timeout(3000)
 
-        # Extract cookies and user-agent from the browser
+        # Read the browser's actual request UA without evaluating scripts blocked by CSP.
         cookies = context.cookies()
-        user_agent: str = page.evaluate("navigator.userAgent")
+        user_agent = response.request.all_headers().get("user-agent")
+        if not user_agent:
+            raise RuntimeError("Homepage navigation request is missing the user-agent header")
     finally:
         page.close()
         context.close()

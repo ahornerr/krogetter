@@ -7,6 +7,7 @@ from click.testing import CliRunner
 
 from krogetter.cli import main
 from krogetter.models import PriceSnapshot, Product, TrackedItem
+from krogetter.tracker import CheckSummary
 
 
 @pytest.fixture
@@ -304,6 +305,7 @@ def test_check_with_changes(runner):
 
     tracker_mock = MagicMock()
     tracker_mock.check_once.return_value = [(item, [change])]
+    tracker_mock.last_check_summary = CheckSummary(attempted=1, succeeded=1)
 
     with (
         patch("krogetter.cli.Tracker", return_value=tracker_mock),
@@ -322,6 +324,7 @@ def test_check_no_changes(runner):
     """check (all) with no changes should print message."""
     tracker_mock = MagicMock()
     tracker_mock.check_once.return_value = []
+    tracker_mock.last_check_summary = CheckSummary()
 
     with (
         patch("krogetter.cli.Tracker", return_value=tracker_mock),
@@ -369,6 +372,7 @@ def test_check_single_item_sale_ended(runner):
 
     tracker_mock = MagicMock()
     tracker_mock.check_item.return_value = [change]
+    tracker_mock.last_check_summary = CheckSummary(attempted=1, succeeded=1)
 
     with (
         patch("krogetter.cli.Storage", return_value=storage_mock),
@@ -379,6 +383,104 @@ def test_check_single_item_sale_ended(runner):
     assert result.exit_code == 0
     assert "Changes for" in result.stdout
     assert "Sale ended" in result.stdout
+
+
+@pytest.mark.parametrize("single", [False, True])
+def test_check_failure_is_nonzero_without_no_changes(runner, single):
+    item = TrackedItem(
+        url="https://www.kingsoopers.com/p/coke/0004900004825",
+        upc="0004900004825",
+        label="Coke",
+        added_at="2026-01-01",
+    )
+    storage = MagicMock()
+    storage.load_items.return_value = [item]
+    tracker = MagicMock()
+    tracker.check_once.return_value = []
+    tracker.check_item.return_value = []
+    tracker.last_check_summary = CheckSummary(attempted=1, failed_upcs=(item.upc,))
+    with (
+        patch("krogetter.cli.Storage", return_value=storage),
+        patch("krogetter.cli.Tracker", return_value=tracker),
+    ):
+        args = ["check", item.url] if single else ["check"]
+        result = runner.invoke(main, args)
+    assert result.exit_code != 0
+    assert "attempted 1, succeeded 0, failed 1" in result.output
+    assert "No changes detected" not in result.output
+    tracker.close.assert_called_once()
+
+
+def test_check_single_unchanged_succeeds_and_closes(runner):
+    item = TrackedItem(
+        url="https://www.kingsoopers.com/p/coke/0004900004825",
+        upc="0004900004825",
+        label="Coke",
+        added_at="2026-01-01",
+    )
+    storage = MagicMock()
+    storage.load_items.return_value = [item]
+    tracker = MagicMock()
+    tracker.check_item.return_value = []
+    tracker.last_check_summary = CheckSummary(attempted=1, succeeded=1)
+    with (
+        patch("krogetter.cli.Storage", return_value=storage),
+        patch("krogetter.cli.Tracker", return_value=tracker),
+    ):
+        result = runner.invoke(main, ["check", item.url])
+    assert result.exit_code == 0
+    assert "No changes detected" in result.output
+    tracker.close.assert_called_once()
+
+
+def test_check_missing_item_still_closes_tracker(runner):
+    storage = MagicMock()
+    storage.load_items.return_value = []
+    tracker = MagicMock()
+    with (
+        patch("krogetter.cli.Storage", return_value=storage),
+        patch("krogetter.cli.Tracker", return_value=tracker),
+    ):
+        result = runner.invoke(main, ["check", "0004900004825"])
+    assert result.exit_code != 0
+    tracker.close.assert_called_once()
+
+
+def test_check_interrupted_is_nonzero_without_no_changes(runner):
+    tracker = MagicMock()
+    tracker.check_once.return_value = []
+    tracker.last_check_summary = CheckSummary(interrupted=True)
+    with patch("krogetter.cli.Storage"), patch("krogetter.cli.Tracker", return_value=tracker):
+        result = runner.invoke(main, ["check"])
+    assert result.exit_code != 0
+    assert "interrupted" in result.output.lower()
+    assert "No changes detected" not in result.output
+    tracker.close.assert_called_once()
+
+
+def test_check_partial_failure_keeps_success_output(runner):
+    from krogetter.detector import ChangeEvent
+
+    item = TrackedItem(
+        url="https://example.com/p/0004900004825",
+        upc="0004900004825",
+        label="Coke",
+        added_at="2026-01-01",
+    )
+    change = ChangeEvent(
+        field="promo", old_value="12", new_value="9", is_new_sale=True, is_sale_ended=False
+    )
+    tracker = MagicMock()
+    tracker.check_once.return_value = [(item, [change])]
+    tracker.last_check_summary = CheckSummary(
+        attempted=2, succeeded=1, failed_upcs=("0000000000002",)
+    )
+    with patch("krogetter.cli.Storage"), patch("krogetter.cli.Tracker", return_value=tracker):
+        result = runner.invoke(main, ["check"])
+    assert result.exit_code != 0
+    assert "promo" in result.output
+    assert "failed 1" in result.output
+    tracker.close.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #
