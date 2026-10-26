@@ -1,11 +1,17 @@
 """Tests for the invisible_playwright-based kroger_web module."""
 
+import gzip
 import json
 import pathlib
+import threading
+import zlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
 
+import brotli
 import httpx
 import pytest
+import zstandard
 
 from krogetter.api.kroger_web import (
     _parse_price,
@@ -294,6 +300,60 @@ class TestPrepareSession:
         mock_context.close.assert_called_once()
 
         client.close()
+
+    @pytest.mark.parametrize("encoding", ["gzip", "deflate", "br", "zstd"])
+    def test_actual_client_decodes_supported_encodings(self, encoding: str) -> None:
+        fixture = load_fixture()
+        fixture["item"]["description"] = "Crème brûlée 雪"
+        raw = json.dumps({"data": {"products": [fixture]}}, ensure_ascii=False).encode("utf-8")
+        compressors = {
+            "gzip": gzip.compress,
+            "deflate": zlib.compress,
+            "br": brotli.compress,
+            "zstd": zstandard.ZstdCompressor().compress,
+        }
+        body = compressors[encoding](raw)
+        request_headers: dict[str, str] = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                request_headers.update({k.lower(): v for k, v in self.headers.items()})
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Encoding", encoding)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args: object) -> None:
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        browser = MagicMock()
+        context = browser.new_context.return_value
+        page = context.new_page.return_value
+        request = MagicMock()
+        request.all_headers.return_value = {"user-agent": "test-agent"}
+        page.goto.return_value.request = request
+        context.cookies.return_value = []
+        url = f"http://127.0.0.1:{server.server_port}/"
+        try:
+            with patch("krogetter.api.kroger_web._get_default_store_laf", return_value=None):
+                client, _ = prepare_session(browser, url)
+            try:
+                product = fetch_product_data(client, "0004900004825")
+                assert product is not None
+                assert product.description == "Crème brûlée 雪"
+                assert request_headers["accept-encoding"] == "gzip, deflate, br, zstd"
+                assert client.headers["accept-encoding"] == "gzip, deflate, br, zstd"
+            finally:
+                client.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
 
     def test_missing_navigation_response_closes_browser_and_does_not_create_client(self) -> None:
         self._assert_navigation_failure(None, "no response")

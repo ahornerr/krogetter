@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 # Browser-like headers required by Akamai on API endpoints.
 # Missing sec-fetch-* or referer results in 403 Access Denied.
+# The runtime dependency installs HTTPX's brotli and zstd decoders for this header.
 _BROWSER_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "en-US,en;q=0.5",
